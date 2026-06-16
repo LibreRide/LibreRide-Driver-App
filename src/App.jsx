@@ -14,31 +14,11 @@ function App() {
   const [activeRide, setActiveRide] = useState(null)
   const [earnings, setEarnings] = useState(0)
   const [tripsCompleted, setTripsCompleted] = useState(0)
+  const [rideHistory, setRideHistory] = useState([])
+  const [averageRating, setAverageRating] = useState(null)
+  const [ratingsCount, setRatingsCount] = useState(0)
 
   useEffect(() => {
-    async function restoreSession() {
-      const { data } = await supabase.auth.getSession()
-
-      if (data.session?.user) {
-        const user = data.session.user
-        setEmail(user.email)
-
-        const { data: driver } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('user_id', user.id)
-          .single()
-
-        if (driver) {
-          setDriverId(driver.id)
-          setStatus(driver.availability_status || 'offline')
-          setTripsCompleted(driver.total_trips || 0)
-          setEarnings(Number(driver.total_earnings || 0))
-          setLoggedIn(true)
-        }
-      }
-    }
-
     restoreSession()
   }, [])
 
@@ -46,9 +26,12 @@ function App() {
     if (!loggedIn) return
 
     loadRideRequests()
+    loadActiveRide()
+    loadRideHistory()
+    loadRatings()
 
     const channel = supabase
-      .channel('ride-requests')
+      .channel('driver-ride-updates')
       .on(
         'postgres_changes',
         {
@@ -58,6 +41,19 @@ function App() {
         },
         () => {
           loadRideRequests()
+          loadActiveRide()
+          loadRideHistory()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'ratings',
+        },
+        () => {
+          loadRatings()
         }
       )
       .subscribe()
@@ -65,7 +61,30 @@ function App() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [loggedIn])
+  }, [loggedIn, driverId])
+
+  async function restoreSession() {
+    const { data } = await supabase.auth.getSession()
+
+    if (data.session?.user) {
+      const user = data.session.user
+      setEmail(user.email)
+
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('*')
+        .eq('user_id', user.id)
+        .single()
+
+      if (driver) {
+        setDriverId(driver.id)
+        setStatus(driver.availability_status || 'offline')
+        setTripsCompleted(driver.total_trips || 0)
+        setEarnings(Number(driver.total_earnings || 0))
+        setLoggedIn(true)
+      }
+    }
+  }
 
   async function login(e) {
     e.preventDefault()
@@ -124,6 +143,9 @@ function App() {
     setActiveRide(null)
     setEarnings(0)
     setTripsCompleted(0)
+    setRideHistory([])
+    setAverageRating(null)
+    setRatingsCount(0)
   }
 
   async function goOnline() {
@@ -193,6 +215,57 @@ function App() {
     setRides(data || [])
   }
 
+  async function loadActiveRide() {
+    if (!driverId) return
+
+    const { data } = await supabase
+      .from('rides')
+      .select('*')
+      .eq('driver_id', driverId)
+      .in('status', ['accepted', 'arrived', 'in_progress'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    setActiveRide(data || null)
+  }
+
+  async function loadRideHistory() {
+    if (!driverId) return
+
+    const { data, error } = await supabase
+      .from('rides')
+      .select('*')
+      .eq('driver_id', driverId)
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    if (error) return
+
+    setRideHistory(data || [])
+  }
+
+  async function loadRatings() {
+    if (!driverId) return
+
+    const { data, error } = await supabase
+      .from('ratings')
+      .select('rating')
+      .eq('driver_id', driverId)
+
+    if (error) return
+
+    if (!data || data.length === 0) {
+      setAverageRating(null)
+      setRatingsCount(0)
+      return
+    }
+
+    const total = data.reduce((sum, item) => sum + Number(item.rating), 0)
+    setAverageRating(total / data.length)
+    setRatingsCount(data.length)
+  }
+
   async function acceptRide(ride) {
     if (!driverId) return
 
@@ -203,8 +276,10 @@ function App() {
       .update({
         status: 'accepted',
         driver_id: driverId,
+        matched_at: new Date().toISOString(),
       })
       .eq('id', ride.id)
+      .eq('status', 'requested')
       .select('*')
       .single()
 
@@ -216,6 +291,7 @@ function App() {
     setActiveRide(data)
     setMessage('Ride accepted.')
     loadRideRequests()
+    loadRideHistory()
   }
 
   async function updateRideStatus(newStatus) {
@@ -223,11 +299,21 @@ function App() {
 
     setMessage('')
 
+    const updates = {
+      status: newStatus,
+    }
+
+    if (newStatus === 'arrived') {
+      updates.driver_arrived_at = new Date().toISOString()
+    }
+
+    if (newStatus === 'in_progress') {
+      updates.trip_started_at = new Date().toISOString()
+    }
+
     const { data, error } = await supabase
       .from('rides')
-      .update({
-        status: newStatus,
-      })
+      .update(updates)
       .eq('id', activeRide.id)
       .select('*')
       .single()
@@ -241,6 +327,8 @@ function App() {
 
     if (newStatus === 'arrived') setMessage('Marked as arrived.')
     if (newStatus === 'in_progress') setMessage('Trip started.')
+
+    loadRideHistory()
   }
 
   async function completeTrip() {
@@ -248,12 +336,15 @@ function App() {
 
     setMessage('')
 
-    const fareDollars = (activeRide.estimated_fare_cents || 0) / 100
+    const fareCents = activeRide.estimated_fare_cents || 0
+    const fareDollars = fareCents / 100
 
     const { error: rideError } = await supabase
       .from('rides')
       .update({
         status: 'completed',
+        completed_at: new Date().toISOString(),
+        final_fare_cents: fareCents,
       })
       .eq('id', activeRide.id)
 
@@ -286,6 +377,7 @@ function App() {
     setStatus('online')
     setMessage('Trip completed successfully.')
     loadRideRequests()
+    loadRideHistory()
   }
 
   async function declineRide(rideId) {
@@ -295,8 +387,10 @@ function App() {
       .from('rides')
       .update({
         status: 'declined',
+        cancellation_reason: 'Declined by driver',
       })
       .eq('id', rideId)
+      .eq('status', 'requested')
 
     if (error) {
       setMessage(error.message)
@@ -305,6 +399,12 @@ function App() {
 
     setMessage('Ride declined.')
     loadRideRequests()
+    loadRideHistory()
+  }
+
+  function formatDate(value) {
+    if (!value) return ''
+    return new Date(value).toLocaleString()
   }
 
   if (!loggedIn) {
@@ -369,6 +469,12 @@ function App() {
         <h2>Today</h2>
         <p>Trips completed: {tripsCompleted}</p>
         <p>Earnings: ${earnings.toFixed(2)}</p>
+        <p>
+          Rating:{' '}
+          {averageRating
+            ? `${averageRating.toFixed(1)} ★ (${ratingsCount})`
+            : 'No ratings yet'}
+        </p>
       </section>
 
       {activeRide && (
@@ -415,6 +521,27 @@ function App() {
           )}
         </section>
       )}
+
+      <section className="card">
+        <h2>Recent Trips</h2>
+
+        {rideHistory.length === 0 ? (
+          <p>No trips yet.</p>
+        ) : (
+          rideHistory.map((ride) => (
+            <div key={ride.id} className="ride-card">
+              <p><strong>Status:</strong> {ride.status}</p>
+              <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
+              <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
+              <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+              <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
+              {ride.completed_at && (
+                <p><strong>Completed:</strong> {formatDate(ride.completed_at)}</p>
+              )}
+            </div>
+          ))
+        )}
+      </section>
     </div>
   )
 }
