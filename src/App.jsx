@@ -22,46 +22,61 @@ function App() {
     restoreSession()
   }, [])
 
-  useEffect(() => {
-    if (!loggedIn) return
+useEffect(() => {
+  if (!loggedIn) return
 
+  loadRideRequests()
+  loadActiveRide()
+  loadRideHistory()
+  loadRatings()
+
+  const channel = supabase
+    .channel(`driver-${driverId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'rides',
+      },
+      () => {
+        console.log('Ride update received')
+
+        loadRideRequests()
+        loadActiveRide()
+        loadRideHistory()
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'ratings',
+      },
+      () => {
+        console.log('Rating update received')
+
+        loadRatings()
+      }
+    )
+    .subscribe((status) => {
+      console.log('Realtime status:', status)
+    })
+
+  // Fallback polling every 5 seconds
+  const interval = setInterval(() => {
     loadRideRequests()
     loadActiveRide()
     loadRideHistory()
     loadRatings()
+  }, 5000)
 
-    const channel = supabase
-      .channel('driver-ride-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'rides',
-        },
-        () => {
-          loadRideRequests()
-          loadActiveRide()
-          loadRideHistory()
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'ratings',
-        },
-        () => {
-          loadRatings()
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [loggedIn, driverId])
+  return () => {
+    clearInterval(interval)
+    supabase.removeChannel(channel)
+  }
+}, [loggedIn, driverId])
 
   async function restoreSession() {
     const { data } = await supabase.auth.getSession()
@@ -288,10 +303,12 @@ function App() {
       return
     }
 
-    setActiveRide(data)
-    setMessage('Ride accepted.')
-    loadRideRequests()
-    loadRideHistory()
+ setActiveRide(data)
+setMessage('Ride accepted.')
+
+await loadRideRequests()
+await loadActiveRide()
+await loadRideHistory()
   }
 
   async function updateRideStatus(newStatus) {
@@ -371,13 +388,16 @@ function App() {
       return
     }
 
-    setTripsCompleted(newTripsCompleted)
-    setEarnings(newEarnings)
-    setActiveRide(null)
-    setStatus('online')
-    setMessage('Trip completed successfully.')
-    loadRideRequests()
-    loadRideHistory()
+setTripsCompleted(newTripsCompleted)
+setEarnings(newEarnings)
+setActiveRide(null)
+setStatus('online')
+setMessage('Trip completed successfully.')
+
+await loadRideRequests()
+await loadActiveRide()
+await loadRideHistory()
+await loadRatings()
   }
 
   async function declineRide(rideId) {
