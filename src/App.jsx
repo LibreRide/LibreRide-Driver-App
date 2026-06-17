@@ -17,66 +17,54 @@ function App() {
   const [rideHistory, setRideHistory] = useState([])
   const [averageRating, setAverageRating] = useState(null)
   const [ratingsCount, setRatingsCount] = useState(0)
+  const [locationText, setLocationText] = useState('Location not shared yet')
 
   useEffect(() => {
     restoreSession()
   }, [])
 
-useEffect(() => {
-  if (!loggedIn) return
+  useEffect(() => {
+    if (!loggedIn) return
 
-  loadRideRequests()
-  loadActiveRide()
-  loadRideHistory()
-  loadRatings()
-
-  const channel = supabase
-    .channel(`driver-${driverId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'rides',
-      },
-      () => {
-        console.log('Ride update received')
-
-        loadRideRequests()
-        loadActiveRide()
-        loadRideHistory()
-      }
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'ratings',
-      },
-      () => {
-        console.log('Rating update received')
-
-        loadRatings()
-      }
-    )
-    .subscribe((status) => {
-      console.log('Realtime status:', status)
-    })
-
-  // Fallback polling every 5 seconds
-  const interval = setInterval(() => {
     loadRideRequests()
     loadActiveRide()
     loadRideHistory()
     loadRatings()
-  }, 5000)
 
-  return () => {
-    clearInterval(interval)
-    supabase.removeChannel(channel)
-  }
-}, [loggedIn, driverId])
+    const channel = supabase
+      .channel(`driver-${driverId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => {
+        loadRideRequests()
+        loadActiveRide()
+        loadRideHistory()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
+        loadRatings()
+      })
+      .subscribe()
+
+    const interval = setInterval(() => {
+      loadRideRequests()
+      loadActiveRide()
+      loadRideHistory()
+      loadRatings()
+    }, 5000)
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(channel)
+    }
+  }, [loggedIn, driverId])
+
+  useEffect(() => {
+    if (!loggedIn || !driverId || status !== 'online') return
+
+    const locationInterval = setInterval(() => {
+      updateDriverLocation()
+    }, 15000)
+
+    return () => clearInterval(locationInterval)
+  }, [loggedIn, driverId, status])
 
   async function restoreSession() {
     const { data } = await supabase.auth.getSession()
@@ -96,6 +84,11 @@ useEffect(() => {
         setStatus(driver.availability_status || 'offline')
         setTripsCompleted(driver.total_trips || 0)
         setEarnings(Number(driver.total_earnings || 0))
+
+        if (driver.current_lat && driver.current_lng) {
+          setLocationText(`${driver.current_lat}, ${driver.current_lng}`)
+        }
+
         setLoggedIn(true)
       }
     }
@@ -142,6 +135,11 @@ useEffect(() => {
     setStatus(driver.availability_status || 'offline')
     setTripsCompleted(driver.total_trips || 0)
     setEarnings(Number(driver.total_earnings || 0))
+
+    if (driver.current_lat && driver.current_lng) {
+      setLocationText(`${driver.current_lat}, ${driver.current_lng}`)
+    }
+
     setLoggedIn(true)
     setMessage('')
   }
@@ -161,6 +159,47 @@ useEffect(() => {
     setRideHistory([])
     setAverageRating(null)
     setRatingsCount(0)
+    setLocationText('Location not shared yet')
+  }
+
+  async function updateDriverLocation() {
+    if (!driverId) return
+
+    if (!navigator.geolocation) {
+      setMessage('GPS is not supported on this device.')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude
+        const lng = position.coords.longitude
+
+        const { error } = await supabase
+          .from('drivers')
+          .update({
+            current_lat: lat,
+            current_lng: lng,
+            last_location_update: new Date().toISOString(),
+          })
+          .eq('id', driverId)
+
+        if (error) {
+          setMessage(error.message)
+          return
+        }
+
+        setLocationText(`${lat.toFixed(6)}, ${lng.toFixed(6)}`)
+      },
+      () => {
+        setMessage('Location permission is required.')
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 5000,
+      }
+    )
   }
 
   async function goOnline() {
@@ -169,24 +208,49 @@ useEffect(() => {
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase
-      .from('drivers')
-      .update({
-        is_online: true,
-        availability_status: 'online',
-        last_location_update: new Date().toISOString(),
-      })
-      .eq('id', driverId)
-
-    setLoading(false)
-
-    if (error) {
-      setMessage(error.message)
+    if (!navigator.geolocation) {
+      setLoading(false)
+      setMessage('GPS is not supported on this device.')
       return
     }
 
-    setStatus('online')
-    setMessage('You are now online and ready for ride requests.')
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude
+        const lng = position.coords.longitude
+
+        const { error } = await supabase
+          .from('drivers')
+          .update({
+            is_online: true,
+            availability_status: 'online',
+            current_lat: lat,
+            current_lng: lng,
+            last_location_update: new Date().toISOString(),
+          })
+          .eq('id', driverId)
+
+        setLoading(false)
+
+        if (error) {
+          setMessage(error.message)
+          return
+        }
+
+        setStatus('online')
+        setLocationText(`${lat.toFixed(6)}, ${lng.toFixed(6)}`)
+        setMessage('You are now online and sharing location.')
+      },
+      () => {
+        setLoading(false)
+        setMessage('Location permission is required to go online.')
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 5000,
+      }
+    )
   }
 
   async function goOffline() {
@@ -303,12 +367,12 @@ useEffect(() => {
       return
     }
 
- setActiveRide(data)
-setMessage('Ride accepted.')
+    setActiveRide(data)
+    setMessage('Ride accepted.')
 
-await loadRideRequests()
-await loadActiveRide()
-await loadRideHistory()
+    await loadRideRequests()
+    await loadActiveRide()
+    await loadRideHistory()
   }
 
   async function updateRideStatus(newStatus) {
@@ -388,16 +452,16 @@ await loadRideHistory()
       return
     }
 
-setTripsCompleted(newTripsCompleted)
-setEarnings(newEarnings)
-setActiveRide(null)
-setStatus('online')
-setMessage('Trip completed successfully.')
+    setTripsCompleted(newTripsCompleted)
+    setEarnings(newEarnings)
+    setActiveRide(null)
+    setStatus('online')
+    setMessage('Trip completed successfully.')
 
-await loadRideRequests()
-await loadActiveRide()
-await loadRideHistory()
-await loadRatings()
+    await loadRideRequests()
+    await loadActiveRide()
+    await loadRideHistory()
+    await loadRatings()
   }
 
   async function declineRide(rideId) {
@@ -471,6 +535,7 @@ await loadRatings()
       <section className="card">
         <h2>Status</h2>
         <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
+        <p><strong>GPS:</strong> {locationText}</p>
 
         {status === 'offline' ? (
           <button onClick={goOnline} disabled={loading}>
@@ -479,6 +544,12 @@ await loadRatings()
         ) : (
           <button onClick={goOffline} disabled={loading}>
             {loading ? 'Updating...' : 'Go Offline'}
+          </button>
+        )}
+
+        {status === 'online' && (
+          <button onClick={updateDriverLocation}>
+            Update GPS Now
           </button>
         )}
 
