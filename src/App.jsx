@@ -4,6 +4,7 @@ import { supabase } from './supabase'
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
+  const [authMode, setAuthMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [status, setStatus] = useState('offline')
@@ -106,11 +107,7 @@ function App() {
       setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
       setVehiclePlate(data.vehicle_plate || '')
 
-      if (data.onboarding_status === 'approved') {
-        setShowOnboarding(false)
-      } else {
-        setShowOnboarding(true)
-      }
+      setShowOnboarding(data.onboarding_status !== 'approved')
     }
   }
 
@@ -125,7 +122,7 @@ function App() {
         .from('drivers')
         .select('*')
         .eq('user_id', user.id)
-        .single()
+        .maybeSingle()
 
       if (driver) {
         setDriverId(driver.id)
@@ -194,9 +191,33 @@ function App() {
     setMessage('')
   }
 
+  async function signup(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+    })
+
+    setLoading(false)
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    if (data.user) {
+      setMessage('Account created successfully. Check your email for verification, then log in.')
+      setAuthMode('login')
+    }
+  }
+
   async function logout() {
     await supabase.auth.signOut()
     setLoggedIn(false)
+    setAuthMode('login')
     setEmail('')
     setPassword('')
     setStatus('offline')
@@ -608,9 +629,9 @@ function App() {
       <div className="driver-app">
         <section className="card">
           <h1>LibreRide Driver</h1>
-          <p>Sign in to continue</p>
+          <p>{authMode === 'login' ? 'Sign in to continue' : 'Create driver account'}</p>
 
-          <form onSubmit={login}>
+          <form onSubmit={authMode === 'login' ? login : signup}>
             <input
               type="email"
               placeholder="Driver email"
@@ -626,9 +647,39 @@ function App() {
             />
 
             <button type="submit" disabled={loading}>
-              {loading ? 'Signing In...' : 'Login'}
+              {loading
+                ? authMode === 'login'
+                  ? 'Signing In...'
+                  : 'Creating Account...'
+                : authMode === 'login'
+                ? 'Login'
+                : 'Create Driver Account'}
             </button>
           </form>
+
+          <div style={{ marginTop: '12px' }}>
+            {authMode === 'login' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setMessage('')
+                  setAuthMode('signup')
+                }}
+              >
+                Create Driver Account
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setMessage('')
+                  setAuthMode('login')
+                }}
+              >
+                Back To Login
+              </button>
+            )}
+          </div>
 
           {message && <p>{message}</p>}
         </section>
@@ -653,53 +704,14 @@ function App() {
             <p>Your application has been submitted and is waiting for admin approval.</p>
           ) : (
             <>
-              <input
-                placeholder="First Name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-              />
-
-              <input
-                placeholder="Last Name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-              />
-
-              <input
-                placeholder="Phone Number"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-
-              <input
-                placeholder="License Number"
-                value={licenseNumber}
-                onChange={(e) => setLicenseNumber(e.target.value)}
-              />
-
-              <input
-                placeholder="Vehicle Make"
-                value={vehicleMake}
-                onChange={(e) => setVehicleMake(e.target.value)}
-              />
-
-              <input
-                placeholder="Vehicle Model"
-                value={vehicleModel}
-                onChange={(e) => setVehicleModel(e.target.value)}
-              />
-
-              <input
-                placeholder="Vehicle Year"
-                value={vehicleYear}
-                onChange={(e) => setVehicleYear(e.target.value)}
-              />
-
-              <input
-                placeholder="License Plate"
-                value={vehiclePlate}
-                onChange={(e) => setVehiclePlate(e.target.value)}
-              />
+              <input placeholder="First Name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+              <input placeholder="Last Name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+              <input placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <input placeholder="License Number" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
+              <input placeholder="Vehicle Make" value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)} />
+              <input placeholder="Vehicle Model" value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
+              <input placeholder="Vehicle Year" value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} />
+              <input placeholder="License Plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
 
               <button onClick={submitOnboarding} disabled={loading}>
                 {loading ? 'Submitting...' : 'Submit For Review'}
