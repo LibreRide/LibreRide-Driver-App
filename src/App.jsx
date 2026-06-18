@@ -19,37 +19,22 @@ function App() {
   const [ratingsCount, setRatingsCount] = useState(0)
   const [locationText, setLocationText] = useState('Location not shared yet')
 
-const [driverProfile, setDriverProfile] = useState(null)
-const [showOnboarding, setShowOnboarding] = useState(false)
+  const [driverProfile, setDriverProfile] = useState(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
-const [firstName, setFirstName] = useState('')
-const [lastName, setLastName] = useState('')
-const [phone, setPhone] = useState('')
-const [licenseNumber, setLicenseNumber] = useState('')
-const [vehicleMake, setVehicleMake] = useState('')
-const [vehicleModel, setVehicleModel] = useState('')
-const [vehicleYear, setVehicleYear] = useState('')
-const [vehiclePlate, setVehiclePlate] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [licenseNumber, setLicenseNumber] = useState('')
+  const [vehicleMake, setVehicleMake] = useState('')
+  const [vehicleModel, setVehicleModel] = useState('')
+  const [vehicleYear, setVehicleYear] = useState('')
+  const [vehiclePlate, setVehiclePlate] = useState('')
 
   useEffect(() => {
     restoreSession()
   }, [])
 
-async function loadDriverProfile(driverId) {
-  const { data } = await supabase
-    .from('drivers')
-    .select('*')
-    .eq('id', driverId)
-    .maybeSingle()
-
-  if (data) {
-    setDriverProfile(data)
-
-    if (data.onboarding_status !== 'approved') {
-      setShowOnboarding(true)
-    }
-  }
-}
   useEffect(() => {
     if (!loggedIn) return
 
@@ -68,6 +53,9 @@ async function loadDriverProfile(driverId) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
         loadRatings()
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => {
+        if (driverId) loadDriverProfile(driverId)
+      })
       .subscribe()
 
     const interval = setInterval(() => {
@@ -75,6 +63,7 @@ async function loadDriverProfile(driverId) {
       loadActiveRide()
       loadRideHistory()
       loadRatings()
+      if (driverId) loadDriverProfile(driverId)
     }, 5000)
 
     return () => {
@@ -92,6 +81,38 @@ async function loadDriverProfile(driverId) {
 
     return () => clearInterval(locationInterval)
   }, [loggedIn, driverId, status])
+
+  async function loadDriverProfile(id) {
+    const { data, error } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    if (data) {
+      setDriverProfile(data)
+
+      setFirstName(data.first_name || '')
+      setLastName(data.last_name || '')
+      setPhone(data.phone || '')
+      setLicenseNumber(data.license_number || '')
+      setVehicleMake(data.vehicle_make || '')
+      setVehicleModel(data.vehicle_model || '')
+      setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
+      setVehiclePlate(data.vehicle_plate || '')
+
+      if (data.onboarding_status === 'approved') {
+        setShowOnboarding(false)
+      } else {
+        setShowOnboarding(true)
+      }
+    }
+  }
 
   async function restoreSession() {
     const { data } = await supabase.auth.getSession()
@@ -160,6 +181,7 @@ async function loadDriverProfile(driverId) {
     }
 
     setDriverId(driver.id)
+    await loadDriverProfile(driver.id)
     setStatus(driver.availability_status || 'offline')
     setTripsCompleted(driver.total_trips || 0)
     setEarnings(Number(driver.total_earnings || 0))
@@ -188,6 +210,54 @@ async function loadDriverProfile(driverId) {
     setAverageRating(null)
     setRatingsCount(0)
     setLocationText('Location not shared yet')
+    setDriverProfile(null)
+    setShowOnboarding(false)
+    setFirstName('')
+    setLastName('')
+    setPhone('')
+    setLicenseNumber('')
+    setVehicleMake('')
+    setVehicleModel('')
+    setVehicleYear('')
+    setVehiclePlate('')
+  }
+
+  async function submitOnboarding() {
+    if (!driverId) return
+
+    if (!firstName || !lastName || !phone || !licenseNumber || !vehicleMake || !vehicleModel || !vehicleYear || !vehiclePlate) {
+      setMessage('Please complete all onboarding fields.')
+      return
+    }
+
+    setLoading(true)
+    setMessage('')
+
+    const { error } = await supabase
+      .from('drivers')
+      .update({
+        first_name: firstName,
+        last_name: lastName,
+        phone,
+        license_number: licenseNumber,
+        vehicle_make: vehicleMake,
+        vehicle_model: vehicleModel,
+        vehicle_year: Number(vehicleYear),
+        vehicle_plate: vehiclePlate,
+        onboarding_status: 'pending_review',
+        background_check_status: 'pending',
+      })
+      .eq('id', driverId)
+
+    setLoading(false)
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    setMessage('Onboarding submitted. Waiting for admin approval.')
+    await loadDriverProfile(driverId)
   }
 
   async function updateDriverLocation() {
@@ -232,6 +302,11 @@ async function loadDriverProfile(driverId) {
 
   async function goOnline() {
     if (!driverId) return
+
+    if (driverProfile?.onboarding_status !== 'approved') {
+      setMessage('Complete onboarding and wait for admin approval before going online.')
+      return
+    }
 
     setLoading(true)
     setMessage('')
@@ -376,6 +451,11 @@ async function loadDriverProfile(driverId) {
   async function acceptRide(ride) {
     if (!driverId) return
 
+    if (driverProfile?.onboarding_status !== 'approved') {
+      setMessage('You must be approved before accepting rides.')
+      return
+    }
+
     setMessage('')
 
     const { data, error } = await supabase
@@ -519,6 +599,10 @@ async function loadDriverProfile(driverId) {
     return new Date(value).toLocaleString()
   }
 
+  const onboardingStatus = driverProfile?.onboarding_status || 'not_started'
+  const isApproved = onboardingStatus === 'approved'
+  const isPendingReview = onboardingStatus === 'pending_review'
+
   if (!loggedIn) {
     return (
       <div className="driver-app">
@@ -560,19 +644,89 @@ async function loadDriverProfile(driverId) {
         <button onClick={logout}>Logout</button>
       </header>
 
+      {showOnboarding && !isApproved && (
+        <section className="card">
+          <h2>Driver Onboarding</h2>
+          <p><strong>Status:</strong> {onboardingStatus}</p>
+
+          {isPendingReview ? (
+            <p>Your application has been submitted and is waiting for admin approval.</p>
+          ) : (
+            <>
+              <input
+                placeholder="First Name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+
+              <input
+                placeholder="Last Name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+
+              <input
+                placeholder="Phone Number"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+
+              <input
+                placeholder="License Number"
+                value={licenseNumber}
+                onChange={(e) => setLicenseNumber(e.target.value)}
+              />
+
+              <input
+                placeholder="Vehicle Make"
+                value={vehicleMake}
+                onChange={(e) => setVehicleMake(e.target.value)}
+              />
+
+              <input
+                placeholder="Vehicle Model"
+                value={vehicleModel}
+                onChange={(e) => setVehicleModel(e.target.value)}
+              />
+
+              <input
+                placeholder="Vehicle Year"
+                value={vehicleYear}
+                onChange={(e) => setVehicleYear(e.target.value)}
+              />
+
+              <input
+                placeholder="License Plate"
+                value={vehiclePlate}
+                onChange={(e) => setVehiclePlate(e.target.value)}
+              />
+
+              <button onClick={submitOnboarding} disabled={loading}>
+                {loading ? 'Submitting...' : 'Submit For Review'}
+              </button>
+            </>
+          )}
+        </section>
+      )}
+
       <section className="card">
         <h2>Status</h2>
         <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
+        <p><strong>Approval:</strong> {onboardingStatus}</p>
         <p><strong>GPS:</strong> {locationText}</p>
 
         {status === 'offline' ? (
-          <button onClick={goOnline} disabled={loading}>
+          <button onClick={goOnline} disabled={loading || !isApproved}>
             {loading ? 'Updating...' : 'Go Online'}
           </button>
         ) : (
           <button onClick={goOffline} disabled={loading}>
             {loading ? 'Updating...' : 'Go Offline'}
           </button>
+        )}
+
+        {!isApproved && (
+          <p>You must complete onboarding and be approved before going online.</p>
         )}
 
         {status === 'online' && (
@@ -618,7 +772,7 @@ async function loadDriverProfile(driverId) {
         </section>
       )}
 
-      {!activeRide && (
+      {!activeRide && isApproved && (
         <section className="card">
           <h2>Ride Requests</h2>
 
