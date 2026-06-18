@@ -19,10 +19,37 @@ function App() {
   const [ratingsCount, setRatingsCount] = useState(0)
   const [locationText, setLocationText] = useState('Location not shared yet')
 
+const [driverProfile, setDriverProfile] = useState(null)
+const [showOnboarding, setShowOnboarding] = useState(false)
+
+const [firstName, setFirstName] = useState('')
+const [lastName, setLastName] = useState('')
+const [phone, setPhone] = useState('')
+const [licenseNumber, setLicenseNumber] = useState('')
+const [vehicleMake, setVehicleMake] = useState('')
+const [vehicleModel, setVehicleModel] = useState('')
+const [vehicleYear, setVehicleYear] = useState('')
+const [vehiclePlate, setVehiclePlate] = useState('')
+
   useEffect(() => {
     restoreSession()
   }, [])
 
+async function loadDriverProfile(driverId) {
+  const { data } = await supabase
+    .from('drivers')
+    .select('*')
+    .eq('id', driverId)
+    .maybeSingle()
+
+  if (data) {
+    setDriverProfile(data)
+
+    if (data.onboarding_status !== 'approved') {
+      setShowOnboarding(true)
+    }
+  }
+}
   useEffect(() => {
     if (!loggedIn) return
 
@@ -81,6 +108,7 @@ function App() {
 
       if (driver) {
         setDriverId(driver.id)
+        await loadDriverProfile(driver.id)
         setStatus(driver.availability_status || 'offline')
         setTripsCompleted(driver.total_trips || 0)
         setEarnings(Number(driver.total_earnings || 0))
