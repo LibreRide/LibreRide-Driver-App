@@ -5,6 +5,7 @@ import { supabase } from './supabase'
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [authMode, setAuthMode] = useState('login')
+  const [activePage, setActivePage] = useState('dashboard')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [status, setStatus] = useState('offline')
@@ -190,6 +191,7 @@ function App() {
     }
 
     setLoggedIn(true)
+    setActivePage('dashboard')
     setMessage('')
   }
 
@@ -220,6 +222,7 @@ function App() {
     await supabase.auth.signOut()
     setLoggedIn(false)
     setAuthMode('login')
+    setActivePage('dashboard')
     setEmail('')
     setPassword('')
     setStatus('offline')
@@ -639,50 +642,21 @@ function App() {
           <p>{authMode === 'login' ? 'Sign in to continue' : 'Create driver account'}</p>
 
           <form onSubmit={authMode === 'login' ? login : signup}>
-            <input
-              type="email"
-              placeholder="Driver email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            <input type="email" placeholder="Driver email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
 
             <button type="submit" disabled={loading}>
-              {loading
-                ? authMode === 'login'
-                  ? 'Signing In...'
-                  : 'Creating Account...'
-                : authMode === 'login'
-                ? 'Login'
-                : 'Create Driver Account'}
+              {loading ? authMode === 'login' ? 'Signing In...' : 'Creating Account...' : authMode === 'login' ? 'Login' : 'Create Driver Account'}
             </button>
           </form>
 
           <div style={{ marginTop: '12px' }}>
             {authMode === 'login' ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setMessage('')
-                  setAuthMode('signup')
-                }}
-              >
+              <button type="button" onClick={() => { setMessage(''); setAuthMode('signup') }}>
                 Create Driver Account
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setMessage('')
-                  setAuthMode('login')
-                }}
-              >
+              <button type="button" onClick={() => { setMessage(''); setAuthMode('login') }}>
                 Back To Login
               </button>
             )}
@@ -702,145 +676,145 @@ function App() {
         <button type="button" onClick={logout}>Logout</button>
       </header>
 
-      {showOnboarding && !isApproved && (
-        <section className="card">
-          <h2>Driver Onboarding</h2>
-          <p><strong>Status:</strong> {onboardingStatus}</p>
+      <section className="card">
+        <button type="button" onClick={() => setActivePage('dashboard')}>Dashboard</button>
+        <button type="button" onClick={() => setActivePage('history')}>Trip History</button>
+      </section>
 
-          {isPendingReview ? (
-            <p>Your application has been submitted and is waiting for admin approval.</p>
-          ) : (
-            <>
-              <input placeholder="First Name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-              <input placeholder="Last Name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-              <input placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
-              <input placeholder="License Number" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
-              <input placeholder="Vehicle Make" value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)} />
-              <input placeholder="Vehicle Model" value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
-              <input placeholder="Vehicle Year" value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} />
-              <input placeholder="License Plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+      {activePage === 'dashboard' && (
+        <>
+          {showOnboarding && !isApproved && (
+            <section className="card">
+              <h2>Driver Onboarding</h2>
+              <p><strong>Status:</strong> {onboardingStatus}</p>
 
-              <button type="button" onClick={submitOnboarding} disabled={loading}>
-                {loading ? 'Submitting...' : 'Submit For Review'}
+              {isPendingReview ? (
+                <p>Your application has been submitted and is waiting for admin approval.</p>
+              ) : (
+                <>
+                  <input placeholder="First Name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+                  <input placeholder="Last Name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+                  <input placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  <input placeholder="License Number" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
+                  <input placeholder="Vehicle Make" value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)} />
+                  <input placeholder="Vehicle Model" value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
+                  <input placeholder="Vehicle Year" value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} />
+                  <input placeholder="License Plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+
+                  <button type="button" onClick={submitOnboarding} disabled={loading}>
+                    {loading ? 'Submitting...' : 'Submit For Review'}
+                  </button>
+                </>
+              )}
+            </section>
+          )}
+
+          <section className="card">
+            <h2>Status</h2>
+            <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
+            <p><strong>Approval:</strong> {onboardingStatus}</p>
+            <p><strong>GPS:</strong> {locationText}</p>
+
+            {status === 'offline' ? (
+              <button type="button" onClick={goOnline} disabled={loading || !isApproved}>
+                {loading ? 'Updating...' : 'Go Online'}
               </button>
-            </>
+            ) : (
+              <button type="button" onClick={goOffline} disabled={loading}>
+                {loading ? 'Updating...' : 'Go Offline'}
+              </button>
+            )}
+
+            {!isApproved && <p>You must complete onboarding and be approved before going online.</p>}
+
+            {status === 'online' && (
+              <button type="button" onClick={updateDriverLocation}>Update GPS Now</button>
+            )}
+
+            {message && <p>{message}</p>}
+          </section>
+
+          <section className="card">
+            <h2>Today</h2>
+            <p>Trips completed: {tripsCompleted}</p>
+            <p>Earnings: ${earnings.toFixed(2)}</p>
+            <p>Rating: {averageRating ? `${averageRating.toFixed(1)} ★ (${ratingsCount})` : 'No ratings yet'}</p>
+          </section>
+
+          {activeRide && (
+            <section className="card">
+              <h2>Active Ride</h2>
+              <p><strong>Status:</strong> {activeRide.status}</p>
+              <p><strong>Pickup:</strong> {activeRide.pickup_address || 'Unknown'}</p>
+              <p><strong>Dropoff:</strong> {activeRide.destination_address || 'Unknown'}</p>
+              <p><strong>Fare:</strong> ${((activeRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+
+              {activeRide.status === 'accepted' && (
+                <button type="button" onClick={() => updateRideStatus('arrived')}>Arrived</button>
+              )}
+
+              {activeRide.status === 'arrived' && (
+                <button type="button" onClick={() => updateRideStatus('in_progress')}>Start Trip</button>
+              )}
+
+              {activeRide.status === 'in_progress' && (
+                <button type="button" onClick={completeTrip}>Complete Trip</button>
+              )}
+            </section>
           )}
-        </section>
+
+          {!activeRide && isApproved && status === 'online' && (
+            <section className="card">
+              <h2>Ride Requests</h2>
+
+              <button type="button" onClick={loadRideRequests}>Refresh Requests</button>
+
+              {rides.length === 0 ? (
+                <p>No active ride requests yet.</p>
+              ) : (
+                rides.map((ride) => (
+                  <div key={ride.id} className="ride-card">
+                    <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
+                    <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
+                    <p><strong>Fare:</strong> ${((ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+
+                    <button type="button" onClick={() => acceptRide(ride)}>Accept</button>
+                    <button type="button" onClick={() => declineRide(ride.id)}>Decline</button>
+                  </div>
+                ))
+              )}
+            </section>
+          )}
+
+          {!activeRide && isApproved && status !== 'online' && (
+            <section className="card">
+              <h2>Ride Requests</h2>
+              <p>Go online to receive ride requests.</p>
+            </section>
+          )}
+        </>
       )}
 
-      <section className="card">
-        <h2>Status</h2>
-        <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
-        <p><strong>Approval:</strong> {onboardingStatus}</p>
-        <p><strong>GPS:</strong> {locationText}</p>
-
-        {status === 'offline' ? (
-          <button type="button" onClick={goOnline} disabled={loading || !isApproved}>
-            {loading ? 'Updating...' : 'Go Online'}
-          </button>
-        ) : (
-          <button type="button" onClick={goOffline} disabled={loading}>
-            {loading ? 'Updating...' : 'Go Offline'}
-          </button>
-        )}
-
-        {!isApproved && (
-          <p>You must complete onboarding and be approved before going online.</p>
-        )}
-
-        {status === 'online' && (
-          <button type="button" onClick={updateDriverLocation}>
-            Update GPS Now
-          </button>
-        )}
-
-        {message && <p>{message}</p>}
-      </section>
-
-      <section className="card">
-        <h2>Today</h2>
-        <p>Trips completed: {tripsCompleted}</p>
-        <p>Earnings: ${earnings.toFixed(2)}</p>
-        <p>
-          Rating:{' '}
-          {averageRating
-            ? `${averageRating.toFixed(1)} ★ (${ratingsCount})`
-            : 'No ratings yet'}
-        </p>
-      </section>
-
-      {activeRide && (
+      {activePage === 'history' && (
         <section className="card">
-          <h2>Active Ride</h2>
-          <p><strong>Status:</strong> {activeRide.status}</p>
-          <p><strong>Pickup:</strong> {activeRide.pickup_address || 'Unknown'}</p>
-          <p><strong>Dropoff:</strong> {activeRide.destination_address || 'Unknown'}</p>
-          <p><strong>Fare:</strong> ${((activeRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+          <h2>Trip History</h2>
 
-          {activeRide.status === 'accepted' && (
-            <button type="button" onClick={() => updateRideStatus('arrived')}>Arrived</button>
-          )}
-
-          {activeRide.status === 'arrived' && (
-            <button type="button" onClick={() => updateRideStatus('in_progress')}>Start Trip</button>
-          )}
-
-          {activeRide.status === 'in_progress' && (
-            <button type="button" onClick={completeTrip}>Complete Trip</button>
-          )}
-        </section>
-      )}
-
-      {!activeRide && isApproved && status === 'online' && (
-        <section className="card">
-          <h2>Ride Requests</h2>
-
-          <button type="button" onClick={loadRideRequests}>Refresh Requests</button>
-
-          {rides.length === 0 ? (
-            <p>No active ride requests yet.</p>
+          {rideHistory.length === 0 ? (
+            <p>No trips yet.</p>
           ) : (
-            rides.map((ride) => (
+            rideHistory.map((ride) => (
               <div key={ride.id} className="ride-card">
+                <p><strong>Status:</strong> {ride.status}</p>
                 <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
                 <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
-                <p><strong>Fare:</strong> ${((ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
-
-                <button type="button" onClick={() => acceptRide(ride)}>Accept</button>
-                <button type="button" onClick={() => declineRide(ride.id)}>Decline</button>
+                <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+                <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
+                {ride.completed_at && <p><strong>Completed:</strong> {formatDate(ride.completed_at)}</p>}
               </div>
             ))
           )}
         </section>
       )}
-
-      {!activeRide && isApproved && status !== 'online' && (
-        <section className="card">
-          <h2>Ride Requests</h2>
-          <p>Go online to receive ride requests.</p>
-        </section>
-      )}
-
-      <section className="card">
-        <h2>Recent Trips</h2>
-
-        {rideHistory.length === 0 ? (
-          <p>No trips yet.</p>
-        ) : (
-          rideHistory.map((ride) => (
-            <div key={ride.id} className="ride-card">
-              <p><strong>Status:</strong> {ride.status}</p>
-              <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
-              <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
-              <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
-              <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
-              {ride.completed_at && (
-                <p><strong>Completed:</strong> {formatDate(ride.completed_at)}</p>
-              )}
-            </div>
-          ))
-        )}
-      </section>
     </div>
   )
 }
