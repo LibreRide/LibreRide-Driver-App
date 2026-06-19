@@ -15,11 +15,66 @@ body {
   border-radius: 18px;
   padding: 20px;
   margin-top: 16px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
+h1 {
+  margin: 0;
+}
+
+h2 {
+  margin-top: 0;
+}
+
+.status {
+  font-size: 32px;
+  font-weight: bold;
+  margin: 12px 0;
+}
+
+/* Inputs */
+
+input,
+textarea,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  font-size: 16px;
+  background: white;
+  color: #111827;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+/* Forms */
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Buttons */
+
 button {
+  width: 100%;
   padding: 12px 20px;
+  margin-top: 10px;
   border: none;
   border-radius: 12px;
   background: #2563eb;
@@ -39,16 +94,43 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.status {
-  font-size: 32px;
-  font-weight: bold;
-  margin: 12px 0;
+/* Ride Cards */
+
+.ride-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 12px;
+  background: #fafafa;
 }
 
-h1 {
-  margin: 0;
+.ride-card p {
+  margin: 6px 0;
 }
 
-h2 {
-  margin-top: 0;
+/* Messages */
+
+.message {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+/* Mobile */
+
+@media (max-width: 480px) {
+  .driver-app {
+    margin: 10px auto;
+    padding: 12px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  button {
+    font-size: 15px;
+  }
 }
