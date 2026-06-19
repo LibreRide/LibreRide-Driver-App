@@ -98,16 +98,16 @@ function App() {
     if (data) {
       setDriverProfile(data)
 
-if (!driverProfile) {
-  setFirstName(data.first_name || '')
-  setLastName(data.last_name || '')
-  setPhone(data.phone || '')
-  setLicenseNumber(data.license_number || '')
-  setVehicleMake(data.vehicle_make || '')
-  setVehicleModel(data.vehicle_model || '')
-  setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
-  setVehiclePlate(data.vehicle_plate || '')
-}
+      if (!driverProfile) {
+        setFirstName(data.first_name || '')
+        setLastName(data.last_name || '')
+        setPhone(data.phone || '')
+        setLicenseNumber(data.license_number || '')
+        setVehicleMake(data.vehicle_make || '')
+        setVehicleModel(data.vehicle_model || '')
+        setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
+        setVehiclePlate(data.vehicle_plate || '')
+      }
 
       setShowOnboarding(data.onboarding_status !== 'approved')
     }
@@ -479,6 +479,11 @@ if (!driverProfile) {
       return
     }
 
+    if (status !== 'online') {
+      setMessage('You must be online before accepting rides.')
+      return
+    }
+
     setMessage('')
 
     const { data, error } = await supabase
@@ -694,7 +699,7 @@ if (!driverProfile) {
       <header className="card">
         <h1>LibreRide Driver</h1>
         <p>{email}</p>
-        <button onClick={logout}>Logout</button>
+        <button type="button" onClick={logout}>Logout</button>
       </header>
 
       {showOnboarding && !isApproved && (
@@ -715,7 +720,7 @@ if (!driverProfile) {
               <input placeholder="Vehicle Year" value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} />
               <input placeholder="License Plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
 
-              <button onClick={submitOnboarding} disabled={loading}>
+              <button type="button" onClick={submitOnboarding} disabled={loading}>
                 {loading ? 'Submitting...' : 'Submit For Review'}
               </button>
             </>
@@ -730,11 +735,11 @@ if (!driverProfile) {
         <p><strong>GPS:</strong> {locationText}</p>
 
         {status === 'offline' ? (
-          <button onClick={goOnline} disabled={loading || !isApproved}>
+          <button type="button" onClick={goOnline} disabled={loading || !isApproved}>
             {loading ? 'Updating...' : 'Go Online'}
           </button>
         ) : (
-          <button onClick={goOffline} disabled={loading}>
+          <button type="button" onClick={goOffline} disabled={loading}>
             {loading ? 'Updating...' : 'Go Offline'}
           </button>
         )}
@@ -744,7 +749,7 @@ if (!driverProfile) {
         )}
 
         {status === 'online' && (
-          <button onClick={updateDriverLocation}>
+          <button type="button" onClick={updateDriverLocation}>
             Update GPS Now
           </button>
         )}
@@ -773,24 +778,24 @@ if (!driverProfile) {
           <p><strong>Fare:</strong> ${((activeRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
 
           {activeRide.status === 'accepted' && (
-            <button onClick={() => updateRideStatus('arrived')}>Arrived</button>
+            <button type="button" onClick={() => updateRideStatus('arrived')}>Arrived</button>
           )}
 
           {activeRide.status === 'arrived' && (
-            <button onClick={() => updateRideStatus('in_progress')}>Start Trip</button>
+            <button type="button" onClick={() => updateRideStatus('in_progress')}>Start Trip</button>
           )}
 
           {activeRide.status === 'in_progress' && (
-            <button onClick={completeTrip}>Complete Trip</button>
+            <button type="button" onClick={completeTrip}>Complete Trip</button>
           )}
         </section>
       )}
 
-      {!activeRide && isApproved && (
+      {!activeRide && isApproved && status === 'online' && (
         <section className="card">
           <h2>Ride Requests</h2>
 
-          <button onClick={loadRideRequests}>Refresh Requests</button>
+          <button type="button" onClick={loadRideRequests}>Refresh Requests</button>
 
           {rides.length === 0 ? (
             <p>No active ride requests yet.</p>
@@ -801,11 +806,18 @@ if (!driverProfile) {
                 <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
                 <p><strong>Fare:</strong> ${((ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
 
-                <button onClick={() => acceptRide(ride)}>Accept</button>
-                <button onClick={() => declineRide(ride.id)}>Decline</button>
+                <button type="button" onClick={() => acceptRide(ride)}>Accept</button>
+                <button type="button" onClick={() => declineRide(ride.id)}>Decline</button>
               </div>
             ))
           )}
+        </section>
+      )}
+
+      {!activeRide && isApproved && status !== 'online' && (
+        <section className="card">
+          <h2>Ride Requests</h2>
+          <p>Go online to receive ride requests.</p>
         </section>
       )}
 
