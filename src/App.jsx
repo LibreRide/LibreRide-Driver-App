@@ -98,14 +98,16 @@ function App() {
     if (data) {
       setDriverProfile(data)
 
-      setFirstName(data.first_name || '')
-      setLastName(data.last_name || '')
-      setPhone(data.phone || '')
-      setLicenseNumber(data.license_number || '')
-      setVehicleMake(data.vehicle_make || '')
-      setVehicleModel(data.vehicle_model || '')
-      setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
-      setVehiclePlate(data.vehicle_plate || '')
+if (!driverProfile) {
+  setFirstName(data.first_name || '')
+  setLastName(data.last_name || '')
+  setPhone(data.phone || '')
+  setLicenseNumber(data.license_number || '')
+  setVehicleMake(data.vehicle_make || '')
+  setVehicleModel(data.vehicle_model || '')
+  setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
+  setVehiclePlate(data.vehicle_plate || '')
+}
 
       setShowOnboarding(data.onboarding_status !== 'approved')
     }
