@@ -21,6 +21,10 @@ function App() {
   const [ratingsCount, setRatingsCount] = useState(0)
   const [locationText, setLocationText] = useState('Location not shared yet')
 
+  const [licenseFrontFile, setLicenseFrontFile] = useState(null)
+  const [licenseBackFile, setLicenseBackFile] = useState(null)
+  const [insuranceFile, setInsuranceFile] = useState(null)
+
   const [driverProfile, setDriverProfile] = useState(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
@@ -246,6 +250,29 @@ function App() {
     setVehicleModel('')
     setVehicleYear('')
     setVehiclePlate('')
+    setLicenseFrontFile(null)
+    setLicenseBackFile(null)
+    setInsuranceFile(null)
+  }
+
+  async function uploadDriverDocument(file, folder) {
+    if (!file || !driverId) return null
+
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${driverId}-${Date.now()}.${fileExt}`
+    const filePath = `${folder}/${fileName}`
+
+    const { error } = await supabase.storage
+      .from('driver-documents')
+      .upload(filePath, file, {
+        upsert: true,
+      })
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return filePath
   }
 
   async function submitOnboarding() {
@@ -256,8 +283,45 @@ function App() {
       return
     }
 
+    if (!driverProfile?.license_front_url && !licenseFrontFile) {
+      setMessage('Please upload the front of your driver license.')
+      return
+    }
+
+    if (!driverProfile?.license_back_url && !licenseBackFile) {
+      setMessage('Please upload the back of your driver license.')
+      return
+    }
+
+    if (!driverProfile?.insurance_card_url && !insuranceFile) {
+      setMessage('Please upload your insurance card.')
+      return
+    }
+
     setLoading(true)
     setMessage('')
+
+    let licenseFrontUrl = driverProfile?.license_front_url || null
+    let licenseBackUrl = driverProfile?.license_back_url || null
+    let insuranceCardUrl = driverProfile?.insurance_card_url || null
+
+    try {
+      if (licenseFrontFile) {
+        licenseFrontUrl = await uploadDriverDocument(licenseFrontFile, 'licenses/front')
+      }
+
+      if (licenseBackFile) {
+        licenseBackUrl = await uploadDriverDocument(licenseBackFile, 'licenses/back')
+      }
+
+      if (insuranceFile) {
+        insuranceCardUrl = await uploadDriverDocument(insuranceFile, 'insurance')
+      }
+    } catch (error) {
+      setLoading(false)
+      setMessage(error.message)
+      return
+    }
 
     const { error } = await supabase
       .from('drivers')
@@ -266,10 +330,13 @@ function App() {
         last_name: lastName,
         phone,
         license_number: licenseNumber,
+        license_front_url: licenseFrontUrl,
+        license_back_url: licenseBackUrl,
         vehicle_make: vehicleMake,
         vehicle_model: vehicleModel,
         vehicle_year: Number(vehicleYear),
         vehicle_plate: vehiclePlate,
+        insurance_card_url: insuranceCardUrl,
         onboarding_status: 'pending_review',
         background_check_status: 'pending',
       })
@@ -282,6 +349,9 @@ function App() {
       return
     }
 
+    setLicenseFrontFile(null)
+    setLicenseBackFile(null)
+    setInsuranceFile(null)
     setMessage('Onboarding submitted. Waiting for admin approval.')
     await loadDriverProfile(driverId)
   }
@@ -696,10 +766,23 @@ function App() {
                   <input placeholder="Last Name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
                   <input placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
                   <input placeholder="License Number" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
+
+                  <label>License Front</label>
+                  <input type="file" accept="image/*,.pdf" onChange={(e) => setLicenseFrontFile(e.target.files[0])} />
+                  {driverProfile?.license_front_url && <p>License front uploaded.</p>}
+
+                  <label>License Back</label>
+                  <input type="file" accept="image/*,.pdf" onChange={(e) => setLicenseBackFile(e.target.files[0])} />
+                  {driverProfile?.license_back_url && <p>License back uploaded.</p>}
+
                   <input placeholder="Vehicle Make" value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)} />
                   <input placeholder="Vehicle Model" value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
                   <input placeholder="Vehicle Year" value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} />
                   <input placeholder="License Plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+
+                  <label>Insurance Card</label>
+                  <input type="file" accept="image/*,.pdf" onChange={(e) => setInsuranceFile(e.target.files[0])} />
+                  {driverProfile?.insurance_card_url && <p>Insurance card uploaded.</p>}
 
                   <button type="button" onClick={submitOnboarding} disabled={loading}>
                     {loading ? 'Submitting...' : 'Submit For Review'}
