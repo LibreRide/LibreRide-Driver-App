@@ -278,7 +278,16 @@ function App() {
   async function submitOnboarding() {
     if (!driverId) return
 
-    if (!firstName || !lastName || !phone || !licenseNumber || !vehicleMake || !vehicleModel || !vehicleYear || !vehiclePlate) {
+    if (
+      !firstName ||
+      !lastName ||
+      !phone ||
+      !licenseNumber ||
+      !vehicleMake ||
+      !vehicleModel ||
+      !vehicleYear ||
+      !vehiclePlate
+    ) {
       setMessage('Please complete all onboarding fields.')
       return
     }
@@ -439,6 +448,7 @@ function App() {
         setStatus('online')
         setLocationText(`${lat.toFixed(6)}, ${lng.toFixed(6)}`)
         setMessage('You are now online and sharing location.')
+        await loadRideRequests()
       },
       () => {
         setLoading(false)
@@ -475,14 +485,21 @@ function App() {
     }
 
     setStatus('offline')
+    setRides([])
     setMessage('You are now offline.')
   }
 
   async function loadRideRequests() {
+    if (!driverId) {
+      setRides([])
+      return
+    }
+
     const { data, error } = await supabase
       .from('rides')
       .select('*')
       .eq('status', 'requested')
+      .contains('dispatched_driver_ids', [driverId])
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -568,11 +585,13 @@ function App() {
       })
       .eq('id', ride.id)
       .eq('status', 'requested')
+      .contains('dispatched_driver_ids', [driverId])
       .select('*')
       .single()
 
     if (error) {
-      setMessage(error.message)
+      setMessage('This ride is no longer available.')
+      await loadRideRequests()
       return
     }
 
@@ -674,14 +693,45 @@ function App() {
   }
 
   async function declineRide(rideId) {
+    if (!driverId) return
+
     setMessage('')
+
+    const { data: ride, error: readError } = await supabase
+      .from('rides')
+      .select('dispatched_driver_ids')
+      .eq('id', rideId)
+      .eq('status', 'requested')
+      .maybeSingle()
+
+    if (readError) {
+      setMessage(readError.message)
+      return
+    }
+
+    if (!ride) {
+      setMessage('This ride is no longer available.')
+      await loadRideRequests()
+      return
+    }
+
+    const currentDriverIds = Array.isArray(ride.dispatched_driver_ids)
+      ? ride.dispatched_driver_ids
+      : []
+
+    const nextDriverIds = currentDriverIds.filter((id) => id !== driverId)
+
+    const updates = {
+      dispatched_driver_ids: nextDriverIds,
+    }
+
+    if (nextDriverIds.length === 0) {
+      updates.status = 'no_driver_available'
+    }
 
     const { error } = await supabase
       .from('rides')
-      .update({
-        status: 'declined',
-        cancellation_reason: 'Declined by driver',
-      })
+      .update(updates)
       .eq('id', rideId)
       .eq('status', 'requested')
 
@@ -691,8 +741,8 @@ function App() {
     }
 
     setMessage('Ride declined.')
-    loadRideRequests()
-    loadRideHistory()
+    await loadRideRequests()
+    await loadRideHistory()
   }
 
   function formatDate(value) {
@@ -712,11 +762,28 @@ function App() {
           <p>{authMode === 'login' ? 'Sign in to continue' : 'Create driver account'}</p>
 
           <form onSubmit={authMode === 'login' ? login : signup}>
-            <input type="email" placeholder="Driver email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <input
+              type="email"
+              placeholder="Driver email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
 
             <button type="submit" disabled={loading}>
-              {loading ? authMode === 'login' ? 'Signing In...' : 'Creating Account...' : authMode === 'login' ? 'Login' : 'Create Driver Account'}
+              {loading
+                ? authMode === 'login'
+                  ? 'Signing In...'
+                  : 'Creating Account...'
+                : authMode === 'login'
+                  ? 'Login'
+                  : 'Create Driver Account'}
             </button>
           </form>
 
@@ -762,26 +829,76 @@ function App() {
                 <p>Your application has been submitted and is waiting for admin approval.</p>
               ) : (
                 <>
-                  <input placeholder="First Name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-                  <input placeholder="Last Name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-                  <input placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                  <input placeholder="License Number" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} />
+                  <input
+                    placeholder="First Name"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="Last Name"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="Phone Number"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="License Number"
+                    value={licenseNumber}
+                    onChange={(e) => setLicenseNumber(e.target.value)}
+                  />
 
                   <label>License Front</label>
-                  <input type="file" accept="image/*,.pdf" onChange={(e) => setLicenseFrontFile(e.target.files[0])} />
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setLicenseFrontFile(e.target.files[0])}
+                  />
                   {driverProfile?.license_front_url && <p>License front uploaded.</p>}
 
                   <label>License Back</label>
-                  <input type="file" accept="image/*,.pdf" onChange={(e) => setLicenseBackFile(e.target.files[0])} />
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setLicenseBackFile(e.target.files[0])}
+                  />
                   {driverProfile?.license_back_url && <p>License back uploaded.</p>}
 
-                  <input placeholder="Vehicle Make" value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)} />
-                  <input placeholder="Vehicle Model" value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
-                  <input placeholder="Vehicle Year" value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} />
-                  <input placeholder="License Plate" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+                  <input
+                    placeholder="Vehicle Make"
+                    value={vehicleMake}
+                    onChange={(e) => setVehicleMake(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="Vehicle Model"
+                    value={vehicleModel}
+                    onChange={(e) => setVehicleModel(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="Vehicle Year"
+                    value={vehicleYear}
+                    onChange={(e) => setVehicleYear(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="License Plate"
+                    value={vehiclePlate}
+                    onChange={(e) => setVehiclePlate(e.target.value)}
+                  />
 
                   <label>Insurance Card</label>
-                  <input type="file" accept="image/*,.pdf" onChange={(e) => setInsuranceFile(e.target.files[0])} />
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setInsuranceFile(e.target.files[0])}
+                  />
                   {driverProfile?.insurance_card_url && <p>Insurance card uploaded.</p>}
 
                   <button type="button" onClick={submitOnboarding} disabled={loading}>
@@ -853,7 +970,7 @@ function App() {
               <button type="button" onClick={loadRideRequests}>Refresh Requests</button>
 
               {rides.length === 0 ? (
-                <p>No active ride requests yet.</p>
+                <p>No dispatched ride requests yet.</p>
               ) : (
                 rides.map((ride) => (
                   <div key={ride.id} className="ride-card">
