@@ -2,6 +2,32 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import { supabase } from './supabase'
 
+const SERVICE_LEVELS = [
+  { value: 'regular', label: 'Regular', description: 'Standard 4-door vehicle' },
+  { value: 'xl', label: 'XL', description: 'SUV/minivan, 6 passenger seats' },
+  { value: 'premium', label: 'Premium', description: 'Higher-quality sedan/SUV' },
+  { value: 'premium_xl', label: 'Premium XL', description: 'Large premium SUV' },
+]
+
+function formatServiceLevel(value) {
+  if (value === 'premium_xl') return 'Premium XL'
+  if (value === 'premium') return 'Premium'
+  if (value === 'xl') return 'XL'
+  return 'Regular'
+}
+
+function formatServiceLevels(levels) {
+  if (!Array.isArray(levels) || levels.length === 0) return 'None'
+  return levels.map(formatServiceLevel).join(', ')
+}
+
+function eligibleServiceLevelsForRide(rideType) {
+  if (rideType === 'premium_xl') return ['premium_xl']
+  if (rideType === 'premium') return ['premium', 'premium_xl']
+  if (rideType === 'xl') return ['xl', 'premium_xl']
+  return ['regular', 'xl', 'premium', 'premium_xl']
+}
+
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [authMode, setAuthMode] = useState('login')
@@ -36,6 +62,9 @@ function App() {
   const [vehicleModel, setVehicleModel] = useState('')
   const [vehicleYear, setVehicleYear] = useState('')
   const [vehiclePlate, setVehiclePlate] = useState('')
+  const [vehicleColor, setVehicleColor] = useState('')
+  const [vehicleSeats, setVehicleSeats] = useState('4')
+  const [requestedServiceLevels, setRequestedServiceLevels] = useState(['regular'])
 
   useEffect(() => {
     restoreSession()
@@ -112,6 +141,13 @@ function App() {
         setVehicleModel(data.vehicle_model || '')
         setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
         setVehiclePlate(data.vehicle_plate || '')
+        setVehicleColor(data.vehicle_color || '')
+        setVehicleSeats(data.vehicle_seats ? String(data.vehicle_seats) : '4')
+        setRequestedServiceLevels(
+          Array.isArray(data.requested_service_levels) && data.requested_service_levels.length > 0
+            ? data.requested_service_levels
+            : ['regular']
+        )
       }
 
       setShowOnboarding(data.onboarding_status !== 'approved')
@@ -250,6 +286,9 @@ function App() {
     setVehicleModel('')
     setVehicleYear('')
     setVehiclePlate('')
+    setVehicleColor('')
+    setVehicleSeats('4')
+    setRequestedServiceLevels(['regular'])
     setLicenseFrontFile(null)
     setLicenseBackFile(null)
     setInsuranceFile(null)
@@ -275,6 +314,30 @@ function App() {
     return filePath
   }
 
+  function toggleRequestedServiceLevel(value) {
+    setRequestedServiceLevels((currentLevels) => {
+      if (value === 'regular') {
+        return currentLevels.includes('regular') ? currentLevels : ['regular', ...currentLevels]
+      }
+
+      if (currentLevels.includes(value)) {
+        const nextLevels = currentLevels.filter((level) => level !== value)
+        return nextLevels.length > 0 ? nextLevels : ['regular']
+      }
+
+      return [...currentLevels, value]
+    })
+  }
+
+  function driverCanReceiveRide(rideType) {
+    const approvedLevels = Array.isArray(driverProfile?.approved_service_levels)
+      ? driverProfile.approved_service_levels
+      : []
+
+    const eligibleLevels = eligibleServiceLevelsForRide(rideType || 'regular')
+    return approvedLevels.some((level) => eligibleLevels.includes(level))
+  }
+
   async function submitOnboarding() {
     if (!driverId) return
 
@@ -286,7 +349,10 @@ function App() {
       !vehicleMake ||
       !vehicleModel ||
       !vehicleYear ||
-      !vehiclePlate
+      !vehiclePlate ||
+      !vehicleColor ||
+      !vehicleSeats ||
+      requestedServiceLevels.length === 0
     ) {
       setMessage('Please complete all onboarding fields.')
       return
@@ -345,9 +411,18 @@ function App() {
         vehicle_model: vehicleModel,
         vehicle_year: Number(vehicleYear),
         vehicle_plate: vehiclePlate,
+        vehicle_color: vehicleColor,
+        vehicle_seats: Number(vehicleSeats),
+        requested_service_levels: requestedServiceLevels,
         insurance_card_url: insuranceCardUrl,
         onboarding_status: 'pending_review',
         background_check_status: 'pending',
+        vehicle_service_status: 'pending',
+        approved_service_levels: [],
+        vehicle_reviewed_at: null,
+        vehicle_rejected_at: null,
+        vehicle_rejection_reason: null,
+        vehicle_suspended_at: null,
       })
       .eq('id', driverId)
 
@@ -410,6 +485,15 @@ function App() {
 
     if (driverProfile?.onboarding_status !== 'approved') {
       setMessage('Complete onboarding and wait for admin approval before going online.')
+      return
+    }
+
+    if (
+      driverProfile?.vehicle_service_status !== 'approved' ||
+      !Array.isArray(driverProfile?.approved_service_levels) ||
+      driverProfile.approved_service_levels.length === 0
+    ) {
+      setMessage('Your vehicle service level must be approved before going online.')
       return
     }
 
@@ -566,6 +650,21 @@ function App() {
 
     if (driverProfile?.onboarding_status !== 'approved') {
       setMessage('You must be approved before accepting rides.')
+      return
+    }
+
+    if (
+      driverProfile?.vehicle_service_status !== 'approved' ||
+      !Array.isArray(driverProfile?.approved_service_levels) ||
+      driverProfile.approved_service_levels.length === 0
+    ) {
+      setMessage('Your vehicle service level must be approved before accepting rides.')
+      return
+    }
+
+    if (!driverCanReceiveRide(ride.ride_type)) {
+      setMessage('Your vehicle is not approved for this ride type.')
+      await loadRideRequests()
       return
     }
 
@@ -751,8 +850,13 @@ function App() {
   }
 
   const onboardingStatus = driverProfile?.onboarding_status || 'not_started'
+  const vehicleServiceStatus = driverProfile?.vehicle_service_status || 'pending'
   const isApproved = onboardingStatus === 'approved'
   const isPendingReview = onboardingStatus === 'pending_review'
+  const isVehicleApproved =
+    vehicleServiceStatus === 'approved' &&
+    Array.isArray(driverProfile?.approved_service_levels) &&
+    driverProfile.approved_service_levels.length > 0
 
   if (!loggedIn) {
     return (
@@ -824,9 +928,13 @@ function App() {
             <section className="card">
               <h2>Driver Onboarding</h2>
               <p><strong>Status:</strong> {onboardingStatus}</p>
+              <p><strong>Vehicle Service Status:</strong> {vehicleServiceStatus}</p>
 
               {isPendingReview ? (
-                <p>Your application has been submitted and is waiting for admin approval.</p>
+                <>
+                  <p>Your application has been submitted and is waiting for admin approval.</p>
+                  <p><strong>Requested Services:</strong> {formatServiceLevels(driverProfile?.requested_service_levels)}</p>
+                </>
               ) : (
                 <>
                   <input
@@ -893,6 +1001,38 @@ function App() {
                     onChange={(e) => setVehiclePlate(e.target.value)}
                   />
 
+                  <input
+                    placeholder="Vehicle Color"
+                    value={vehicleColor}
+                    onChange={(e) => setVehicleColor(e.target.value)}
+                  />
+
+                  <input
+                    placeholder="Passenger Seats"
+                    type="number"
+                    min="1"
+                    max="8"
+                    value={vehicleSeats}
+                    onChange={(e) => setVehicleSeats(e.target.value)}
+                  />
+
+                  <div className="ride-card">
+                    <h3>Requested Service Levels</h3>
+                    <p>Select what this vehicle should be reviewed for. Admin makes the final approval.</p>
+
+                    {SERVICE_LEVELS.map((level) => (
+                      <label key={level.value} style={{ display: 'block', marginBottom: '8px' }}>
+                        <input
+                          type="checkbox"
+                          checked={requestedServiceLevels.includes(level.value)}
+                          onChange={() => toggleRequestedServiceLevel(level.value)}
+                        />
+                        {' '}
+                        <strong>{level.label}</strong> — {level.description}
+                      </label>
+                    ))}
+                  </div>
+
                   <label>Insurance Card</label>
                   <input
                     type="file"
@@ -913,10 +1053,13 @@ function App() {
             <h2>Status</h2>
             <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
             <p><strong>Approval:</strong> {onboardingStatus}</p>
+            <p><strong>Vehicle Approval:</strong> {vehicleServiceStatus}</p>
+            <p><strong>Requested Services:</strong> {formatServiceLevels(driverProfile?.requested_service_levels)}</p>
+            <p><strong>Approved Services:</strong> {formatServiceLevels(driverProfile?.approved_service_levels)}</p>
             <p><strong>GPS:</strong> {locationText}</p>
 
             {status === 'offline' ? (
-              <button type="button" onClick={goOnline} disabled={loading || !isApproved}>
+              <button type="button" onClick={goOnline} disabled={loading || !isApproved || !isVehicleApproved}>
                 {loading ? 'Updating...' : 'Go Online'}
               </button>
             ) : (
@@ -926,6 +1069,10 @@ function App() {
             )}
 
             {!isApproved && <p>You must complete onboarding and be approved before going online.</p>}
+
+            {isApproved && !isVehicleApproved && (
+              <p>Your driver account is approved, but your vehicle service level is still waiting for approval.</p>
+            )}
 
             {status === 'online' && (
               <button type="button" onClick={updateDriverLocation}>Update GPS Now</button>
@@ -945,6 +1092,10 @@ function App() {
             <section className="card">
               <h2>Active Ride</h2>
               <p><strong>Status:</strong> {activeRide.status}</p>
+              <p><strong>Ride Type:</strong> {formatServiceLevel(activeRide.ride_type)}</p>
+              {activeRide.requested_capacity && (
+                <p><strong>Requested Capacity:</strong> {activeRide.requested_capacity} seats</p>
+              )}
               <p><strong>Pickup:</strong> {activeRide.pickup_address || 'Unknown'}</p>
               <p><strong>Dropoff:</strong> {activeRide.destination_address || 'Unknown'}</p>
               <p><strong>Fare:</strong> ${((activeRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
@@ -974,6 +1125,10 @@ function App() {
               ) : (
                 rides.map((ride) => (
                   <div key={ride.id} className="ride-card">
+                    <p><strong>Ride Type:</strong> {formatServiceLevel(ride.ride_type)}</p>
+                    {ride.requested_capacity && (
+                      <p><strong>Requested Capacity:</strong> {ride.requested_capacity} seats</p>
+                    )}
                     <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
                     <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
                     <p><strong>Fare:</strong> ${((ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
@@ -1005,6 +1160,10 @@ function App() {
             rideHistory.map((ride) => (
               <div key={ride.id} className="ride-card">
                 <p><strong>Status:</strong> {ride.status}</p>
+                <p><strong>Ride Type:</strong> {formatServiceLevel(ride.ride_type)}</p>
+                {ride.requested_capacity && (
+                  <p><strong>Requested Capacity:</strong> {ride.requested_capacity} seats</p>
+                )}
                 <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
                 <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
                 <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
