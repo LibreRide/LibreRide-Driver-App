@@ -50,7 +50,15 @@ function App() {
   const [licenseFrontFile, setLicenseFrontFile] = useState(null)
   const [licenseBackFile, setLicenseBackFile] = useState(null)
   const [insuranceFile, setInsuranceFile] = useState(null)
-
+const [driverPhotoFile, setDriverPhotoFile] = useState(null)
+const [registrationFile, setRegistrationFile] = useState(null)
+const [vehicleFrontFile, setVehicleFrontFile] = useState(null)
+const [vehicleBackFile, setVehicleBackFile] = useState(null)
+const [vehicleLeftFile, setVehicleLeftFile] = useState(null)
+const [vehicleRightFile, setVehicleRightFile] = useState(null)
+const [vehicleInteriorFrontFile, setVehicleInteriorFrontFile] = useState(null)
+const [vehicleInteriorBackFile, setVehicleInteriorBackFile] = useState(null)
+const [vehicleTrunkFile, setVehicleTrunkFile] = useState(null)
   const [driverProfile, setDriverProfile] = useState(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
@@ -294,25 +302,40 @@ function App() {
     setInsuranceFile(null)
   }
 
-  async function uploadDriverDocument(file, folder) {
-    if (!file || !driverId) return null
+ async function uploadDriverDocument(file, folder) {
+  if (!file) return null
 
-    const fileExt = file.name.split('.').pop()
-    const fileName = `${driverId}-${Date.now()}.${fileExt}`
-    const filePath = `${folder}/${fileName}`
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser()
 
-    const { error } = await supabase.storage
-      .from('driver-documents')
-      .upload(filePath, file, {
-        upsert: true,
-      })
-
-    if (error) {
-      throw new Error(error.message)
-    }
-
-    return filePath
+  if (userError || !user) {
+    throw new Error('You must be logged in to upload documents.')
   }
+
+  const fileExt = file.name.split('.').pop() || 'jpg'
+  const uniqueId =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}`
+
+  const fileName = `${Date.now()}-${uniqueId}.${fileExt}`
+  const filePath = `${user.id}/${folder}/${fileName}`
+
+  const { error } = await supabase.storage
+    .from('driver-documents')
+    .upload(filePath, file, {
+      upsert: true,
+      contentType: file.type || undefined,
+    })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return filePath
+}
 
   function toggleRequestedServiceLevel(value) {
     setRequestedServiceLevels((currentLevels) => {
@@ -372,14 +395,65 @@ function App() {
       setMessage('Please upload your insurance card.')
       return
     }
+if (!driverProfile?.driver_photo_url && !driverPhotoFile) {
+  setMessage('Please upload a driver profile photo or selfie.')
+  return
+}
 
+if (!driverProfile?.vehicle_registration_url && !registrationFile) {
+  setMessage('Please upload your vehicle registration.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_front_url && !vehicleFrontFile) {
+  setMessage('Please upload a front photo of your vehicle.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_back_url && !vehicleBackFile) {
+  setMessage('Please upload a back photo of your vehicle.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_left_url && !vehicleLeftFile) {
+  setMessage('Please upload a left-side photo of your vehicle.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_right_url && !vehicleRightFile) {
+  setMessage('Please upload a right-side photo of your vehicle.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_interior_front_url && !vehicleInteriorFrontFile) {
+  setMessage('Please upload a front interior photo of your vehicle.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_interior_back_url && !vehicleInteriorBackFile) {
+  setMessage('Please upload a back-seat interior photo of your vehicle.')
+  return
+}
+
+if (!driverProfile?.vehicle_photo_trunk_url && !vehicleTrunkFile) {
+  setMessage('Please upload a trunk/cargo photo of your vehicle.')
+  return
+}
     setLoading(true)
     setMessage('')
 
     let licenseFrontUrl = driverProfile?.license_front_url || null
     let licenseBackUrl = driverProfile?.license_back_url || null
     let insuranceCardUrl = driverProfile?.insurance_card_url || null
-
+let driverPhotoUrl = driverProfile?.driver_photo_url || null
+let registrationUrl = driverProfile?.vehicle_registration_url || null
+let vehicleFrontUrl = driverProfile?.vehicle_photo_front_url || null
+let vehicleBackUrl = driverProfile?.vehicle_photo_back_url || null
+let vehicleLeftUrl = driverProfile?.vehicle_photo_left_url || null
+let vehicleRightUrl = driverProfile?.vehicle_photo_right_url || null
+let vehicleInteriorFrontUrl = driverProfile?.vehicle_photo_interior_front_url || null
+let vehicleInteriorBackUrl = driverProfile?.vehicle_photo_interior_back_url || null
+let vehicleTrunkUrl = driverProfile?.vehicle_photo_trunk_url || null
     try {
       if (licenseFrontFile) {
         licenseFrontUrl = await uploadDriverDocument(licenseFrontFile, 'licenses/front')
@@ -392,6 +466,41 @@ function App() {
       if (insuranceFile) {
         insuranceCardUrl = await uploadDriverDocument(insuranceFile, 'insurance')
       }
+      if (driverPhotoFile) {
+  driverPhotoUrl = await uploadDriverDocument(driverPhotoFile, 'driver-photo')
+}
+
+if (registrationFile) {
+  registrationUrl = await uploadDriverDocument(registrationFile, 'vehicle-registration')
+}
+
+if (vehicleFrontFile) {
+  vehicleFrontUrl = await uploadDriverDocument(vehicleFrontFile, 'vehicle-photos/front')
+}
+
+if (vehicleBackFile) {
+  vehicleBackUrl = await uploadDriverDocument(vehicleBackFile, 'vehicle-photos/back')
+}
+
+if (vehicleLeftFile) {
+  vehicleLeftUrl = await uploadDriverDocument(vehicleLeftFile, 'vehicle-photos/left')
+}
+
+if (vehicleRightFile) {
+  vehicleRightUrl = await uploadDriverDocument(vehicleRightFile, 'vehicle-photos/right')
+}
+
+if (vehicleInteriorFrontFile) {
+  vehicleInteriorFrontUrl = await uploadDriverDocument(vehicleInteriorFrontFile, 'vehicle-photos/interior-front')
+}
+
+if (vehicleInteriorBackFile) {
+  vehicleInteriorBackUrl = await uploadDriverDocument(vehicleInteriorBackFile, 'vehicle-photos/interior-back')
+}
+
+if (vehicleTrunkFile) {
+  vehicleTrunkUrl = await uploadDriverDocument(vehicleTrunkFile, 'vehicle-photos/trunk')
+}
     } catch (error) {
       setLoading(false)
       setMessage(error.message)
@@ -415,6 +524,15 @@ function App() {
         vehicle_seats: Number(vehicleSeats),
         requested_service_levels: requestedServiceLevels,
         insurance_card_url: insuranceCardUrl,
+        driver_photo_url: driverPhotoUrl,
+vehicle_registration_url: registrationUrl,
+vehicle_photo_front_url: vehicleFrontUrl,
+vehicle_photo_back_url: vehicleBackUrl,
+vehicle_photo_left_url: vehicleLeftUrl,
+vehicle_photo_right_url: vehicleRightUrl,
+vehicle_photo_interior_front_url: vehicleInteriorFrontUrl,
+vehicle_photo_interior_back_url: vehicleInteriorBackUrl,
+vehicle_photo_trunk_url: vehicleTrunkUrl,
         onboarding_status: 'pending_review',
         background_check_status: 'pending',
         vehicle_service_status: 'pending',
@@ -436,6 +554,15 @@ function App() {
     setLicenseFrontFile(null)
     setLicenseBackFile(null)
     setInsuranceFile(null)
+    setDriverPhotoFile(null)
+setRegistrationFile(null)
+setVehicleFrontFile(null)
+setVehicleBackFile(null)
+setVehicleLeftFile(null)
+setVehicleRightFile(null)
+setVehicleInteriorFrontFile(null)
+setVehicleInteriorBackFile(null)
+setVehicleTrunkFile(null)
     setMessage('Onboarding submitted. Waiting for admin approval.')
     await loadDriverProfile(driverId)
   }
@@ -954,7 +1081,13 @@ function App() {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                   />
-
+<label>Driver Profile Photo / Selfie</label>
+<input
+  type="file"
+  accept="image/*"
+  onChange={(e) => setDriverPhotoFile(e.target.files[0])}
+/>
+{driverProfile?.driver_photo_url && <p>Driver photo uploaded.</p>}
                   <input
                     placeholder="License Number"
                     value={licenseNumber}
@@ -1015,7 +1148,74 @@ function App() {
                     value={vehicleSeats}
                     onChange={(e) => setVehicleSeats(e.target.value)}
                   />
+<label>Vehicle Registration</label>
+<input
+  type="file"
+  accept="image/*,.pdf"
+  onChange={(e) => setRegistrationFile(e.target.files[0])}
+/>
+{driverProfile?.vehicle_registration_url && <p>Vehicle registration uploaded.</p>}
 
+<div className="ride-card">
+  <h3>Vehicle Photos</h3>
+  <p>Upload clear photos for admin review before service approval.</p>
+
+  <label>Vehicle Front Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleFrontFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_front_url && <p>Front photo uploaded.</p>}
+
+  <label>Vehicle Back Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleBackFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_back_url && <p>Back photo uploaded.</p>}
+
+  <label>Vehicle Left Side Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleLeftFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_left_url && <p>Left side photo uploaded.</p>}
+
+  <label>Vehicle Right Side Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleRightFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_right_url && <p>Right side photo uploaded.</p>}
+
+  <label>Interior Front Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleInteriorFrontFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_interior_front_url && <p>Interior front photo uploaded.</p>}
+
+  <label>Interior Back Seat Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleInteriorBackFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_interior_back_url && <p>Interior back photo uploaded.</p>}
+
+  <label>Trunk / Cargo Photo</label>
+  <input
+    type="file"
+    accept="image/*"
+    onChange={(e) => setVehicleTrunkFile(e.target.files[0])}
+  />
+  {driverProfile?.vehicle_photo_trunk_url && <p>Trunk photo uploaded.</p>}
+</div>
                   <div className="ride-card">
                     <h3>Requested Service Levels</h3>
                     <p>Select what this vehicle should be reviewed for. Admin makes the final approval.</p>
