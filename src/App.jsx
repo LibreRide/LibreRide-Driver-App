@@ -8,26 +8,28 @@ import {
   VEHICLE_TYPES,
   VEHICLE_YEAR_OPTIONS,
   getVehicleSuggestion,
-  getSuggestedServiceLevels,
 } from './vehicleCatalog'
+
 const API_BASE = 'https://libreride-backend.libreride.workers.dev'
-const SERVICE_LEVELS = [
-  { value: 'regular', label: 'Regular', description: 'Standard 4-door vehicle' },
-  { value: 'xl', label: 'XL', description: 'SUV/minivan, 6 passenger seats' },
-  { value: 'premium', label: 'Premium', description: 'Higher-quality sedan/SUV' },
-  { value: 'premium_xl', label: 'Premium XL', description: 'Large premium SUV' },
-]
+
+const SERVICE_LABELS = {
+  regular: 'Regular',
+  xl: 'XL',
+  premium: 'Premium',
+  premium_xl: 'Premium XL',
+}
 
 function formatServiceLevel(value) {
-  if (value === 'premium_xl') return 'Premium XL'
-  if (value === 'premium') return 'Premium'
-  if (value === 'xl') return 'XL'
-  return 'Regular'
+  return SERVICE_LABELS[value] || 'Regular'
 }
 
 function formatServiceLevels(levels) {
-  if (!Array.isArray(levels) || levels.length === 0) return 'None'
+  if (!Array.isArray(levels) || levels.length === 0) return 'Not approved yet'
   return levels.map(formatServiceLevel).join(', ')
+}
+
+function formatRideType(value) {
+  return SERVICE_LABELS[value] || 'Regular'
 }
 
 function eligibleServiceLevelsForRide(rideType) {
@@ -35,6 +37,22 @@ function eligibleServiceLevelsForRide(rideType) {
   if (rideType === 'premium') return ['premium', 'premium_xl']
   if (rideType === 'xl') return ['xl', 'premium_xl']
   return ['regular', 'xl', 'premium', 'premium_xl']
+}
+
+function formatMoneyFromCents(value) {
+  return `$${(Number(value || 0) / 100).toFixed(2)}`
+}
+
+function formatDate(value) {
+  if (!value) return ''
+  return new Date(value).toLocaleString()
+}
+
+function statusText(value) {
+  if (!value) return 'Pending'
+  return String(value)
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function App() {
@@ -70,7 +88,6 @@ function App() {
   const [vehicleTrunkFile, setVehicleTrunkFile] = useState(null)
 
   const [driverProfile, setDriverProfile] = useState(null)
-  const [showOnboarding, setShowOnboarding] = useState(false)
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -83,14 +100,14 @@ function App() {
   const [vehiclePlate, setVehiclePlate] = useState('')
   const [vehicleColor, setVehicleColor] = useState('')
   const [vehicleSeats, setVehicleSeats] = useState('4')
-  const [requestedServiceLevels, setRequestedServiceLevels] = useState(['regular'])
   const [ssn, setSsn] = useState('')
+
   useEffect(() => {
     restoreSession()
   }, [])
 
   useEffect(() => {
-    if (!loggedIn) return
+    if (!loggedIn || !driverId) return
 
     loadRideRequests()
     loadActiveRide()
@@ -108,7 +125,7 @@ function App() {
         loadRatings()
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => {
-        if (driverId) loadDriverProfile(driverId)
+        loadDriverProfile(driverId)
       })
       .subscribe()
 
@@ -117,7 +134,7 @@ function App() {
       loadActiveRide()
       loadRideHistory()
       loadRatings()
-      if (driverId) loadDriverProfile(driverId)
+      loadDriverProfile(driverId)
     }, 5000)
 
     return () => {
@@ -136,111 +153,17 @@ function App() {
     return () => clearInterval(locationInterval)
   }, [loggedIn, driverId, status])
 
-  async function loadDriverProfile(id) {
-    const { data, error } = await supabase
-      .from('drivers')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle()
-
-    if (error) {
-      setMessage(error.message)
-      return
-    }
-
-    if (data) {
-      setDriverProfile(data)
-
-      if (!driverProfile) {
-        setFirstName(data.first_name || '')
-        setLastName(data.last_name || '')
-        setPhone(data.phone || '')
-        setLicenseNumber(data.license_number || '')
-        setVehicleType(data.vehicle_type || 'sedan')
-        setVehicleMake(data.vehicle_make || '')
-        setVehicleModel(data.vehicle_model || '')
-        setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
-        setVehiclePlate(data.vehicle_plate || '')
-        setVehicleColor(data.vehicle_color || '')
-        setVehicleSeats(data.vehicle_seats ? String(data.vehicle_seats) : '4')
-        setRequestedServiceLevels(
-          Array.isArray(data.requested_service_levels) && data.requested_service_levels.length > 0
-            ? data.requested_service_levels
-            : ['regular']
-        )
-      }
-
-      setShowOnboarding(data.onboarding_status !== 'approved')
-    }
-  }
-
   async function restoreSession() {
-  const { data } = await supabase.auth.getSession()
+    const { data } = await supabase.auth.getSession()
 
-  if (!data.session?.user) {
-    return
-  }
-
-  const user = data.session.user
-  setEmail(user.email)
-
-  const { data: driver, error: driverError } = await supabase
-    .from('drivers')
-    .upsert(
-      {
-        user_id: user.id,
-        email: user.email,
-      },
-      { onConflict: 'user_id' }
-    )
-    .select('*')
-    .single()
-
-  if (driverError) {
-    setMessage(driverError.message)
-    return
-  }
-
-  setDriverId(driver.id)
-  await loadDriverProfile(driver.id)
-  setStatus(driver.availability_status || 'offline')
-  setTripsCompleted(driver.total_trips || 0)
-  setEarnings(Number(driver.total_earnings || 0))
-
-  if (driver.current_lat && driver.current_lng) {
-    setLocationText(`${driver.current_lat}, ${driver.current_lng}`)
-  }
-
-  setLoggedIn(true)
-  setActivePage('dashboard')
-
-  const params = new URLSearchParams(window.location.search)
-
-  if (params.get('verified') === 'true') {
-    setMessage('Email verified. Continue your LibreRide driver onboarding.')
-    window.history.replaceState({}, document.title, window.location.pathname)
-  }
-}
-
-  async function login(e) {
-    e.preventDefault()
-    setLoading(true)
-    setMessage('')
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (error) {
-      setLoading(false)
-      setMessage(error.message)
+    if (!data.session?.user) {
       return
     }
 
-    const user = data.user
+    const user = data.session.user
+    setEmail(user.email || '')
 
-    const { data: driver, error: insertError } = await supabase
+    const { data: driver, error: driverError } = await supabase
       .from('drivers')
       .upsert(
         {
@@ -252,10 +175,8 @@ function App() {
       .select('*')
       .single()
 
-    setLoading(false)
-
-    if (insertError) {
-      setMessage(insertError.message)
+    if (driverError) {
+      setMessage(driverError.message)
       return
     }
 
@@ -271,7 +192,42 @@ function App() {
 
     setLoggedIn(true)
     setActivePage('dashboard')
-    setMessage('')
+
+    const params = new URLSearchParams(window.location.search)
+
+    if (params.get('verified') === 'true') {
+      setMessage('Email verified. Continue your onboarding.')
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
+  }
+
+  async function loadDriverProfile(id) {
+    const { data, error } = await supabase
+      .from('drivers')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+
+    if (error) {
+      setMessage(error.message)
+      return
+    }
+
+    if (!data) return
+
+    setDriverProfile(data)
+
+    setFirstName(data.first_name || '')
+    setLastName(data.last_name || '')
+    setPhone(data.phone || '')
+    setLicenseNumber(data.license_number || '')
+    setVehicleType(data.vehicle_type || 'sedan')
+    setVehicleMake(data.vehicle_make || '')
+    setVehicleModel(data.vehicle_model || '')
+    setVehicleYear(data.vehicle_year ? String(data.vehicle_year) : '')
+    setVehiclePlate(data.vehicle_plate || '')
+    setVehicleColor(data.vehicle_color || '')
+    setVehicleSeats(data.vehicle_seats ? String(data.vehicle_seats) : '4')
   }
 
   async function signup(e) {
@@ -279,7 +235,7 @@ function App() {
     setLoading(true)
     setMessage('')
 
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -298,166 +254,106 @@ function App() {
       return
     }
 
-    if (data.user) {
-      setMessage('Account created. Please check your email and click the LibreRide confirmation link to continue onboarding.')
-      setAuthMode('login')
+    setMessage('Account created. Please check your email to verify your account.')
+    setAuthMode('login')
+  }
+
+  async function login(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    setLoading(false)
+
+    if (error) {
+      setMessage(error.message)
+      return
     }
+
+    const user = data.session.user
+
+    const { data: driver, error: driverError } = await supabase
+      .from('drivers')
+      .upsert(
+        {
+          user_id: user.id,
+          email: user.email,
+        },
+        { onConflict: 'user_id' }
+      )
+      .select('*')
+      .single()
+
+    if (driverError) {
+      setMessage(driverError.message)
+      return
+    }
+
+    setDriverId(driver.id)
+    await loadDriverProfile(driver.id)
+    setStatus(driver.availability_status || 'offline')
+    setTripsCompleted(driver.total_trips || 0)
+    setEarnings(Number(driver.total_earnings || 0))
+    setLoggedIn(true)
+    setActivePage('dashboard')
+    setMessage('')
   }
 
   async function logout() {
+    if (driverId) {
+      await goOffline()
+    }
+
     await supabase.auth.signOut()
     setLoggedIn(false)
-    setAuthMode('login')
-    setActivePage('dashboard')
+    setDriverProfile(null)
+    setDriverId(null)
     setEmail('')
     setPassword('')
     setStatus('offline')
-    setMessage('')
     setRides([])
-    setDriverId(null)
     setActiveRide(null)
-    setEarnings(0)
-    setTripsCompleted(0)
     setRideHistory([])
-    setAverageRating(null)
-    setRatingsCount(0)
-    setLocationText('Location not shared yet')
-    setDriverProfile(null)
-    setShowOnboarding(false)
-    setFirstName('')
-    setLastName('')
-    setPhone('')
-    setLicenseNumber('')
-    setVehicleType('sedan')
-    setVehicleMake('')
-    setVehicleModel('')
-    setVehicleYear('')
-    setVehiclePlate('')
-    setVehicleColor('')
-    setVehicleSeats('4')
-    setRequestedServiceLevels(['regular'])
-    setSsn('')
-    setLicenseFrontFile(null)
-    setLicenseBackFile(null)
-    setInsuranceFile(null)
-    setDriverPhotoFile(null)
-    setRegistrationFile(null)
-    setVehicleFrontFile(null)
-    setVehicleBackFile(null)
-    setVehicleLeftFile(null)
-    setVehicleRightFile(null)
-    setVehicleInteriorFrontFile(null)
-    setVehicleInteriorBackFile(null)
-    setVehicleTrunkFile(null)
-  }
-
-  async function uploadDriverDocument(file, folder) {
-    if (!file) return null
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser()
-
-    if (userError || !user) {
-      throw new Error('You must be logged in to upload documents.')
-    }
-
-    const fileExt = file.name.split('.').pop() || 'jpg'
-    const uniqueId =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${Date.now()}`
-
-    const fileName = `${Date.now()}-${uniqueId}.${fileExt}`
-    const filePath = `${user.id}/${folder}/${fileName}`
-
-    const { error } = await supabase.storage
-      .from('driver-documents')
-      .upload(filePath, file, {
-        upsert: true,
-        contentType: file.type || undefined,
-      })
-
-    if (error) {
-      throw new Error(error.message)
-    }
-
-    return filePath
-  }
-
-  function toggleRequestedServiceLevel(value) {
-    setRequestedServiceLevels((currentLevels) => {
-      if (value === 'regular') {
-        return currentLevels.includes('regular') ? currentLevels : ['regular', ...currentLevels]
-      }
-
-      if (currentLevels.includes(value)) {
-        const nextLevels = currentLevels.filter((level) => level !== value)
-        return nextLevels.length > 0 ? nextLevels : ['regular']
-      }
-
-      return [...currentLevels, value]
-    })
-  }
-
-  function driverCanReceiveRide(rideType) {
-    const approvedLevels = Array.isArray(driverProfile?.approved_service_levels)
-      ? driverProfile.approved_service_levels
-      : []
-
-    const eligibleLevels = eligibleServiceLevelsForRide(rideType || 'regular')
-    return approvedLevels.some((level) => eligibleLevels.includes(level))
+    setMessage('')
   }
 
   function handleVehicleMakeChange(nextMake) {
     setVehicleMake(nextMake)
     setVehicleModel('')
-
-    const firstModel = VEHICLE_MODELS_BY_MAKE[nextMake]?.[0]
-
-    if (firstModel) {
-      setVehicleModel(firstModel.model)
-      setVehicleType(firstModel.type)
-      setVehicleSeats(String(firstModel.seats))
-      setRequestedServiceLevels(getSuggestedServiceLevels(firstModel))
-    } else {
-      setVehicleType('sedan')
-      setVehicleSeats('4')
-      setRequestedServiceLevels(['regular'])
-    }
   }
 
   function handleVehicleModelChange(nextModel) {
     setVehicleModel(nextModel)
 
-    const suggestion = getVehicleSuggestion(vehicleMake, nextModel)
+    try {
+      const suggestion = getVehicleSuggestion?.({
+        make: vehicleMake,
+        model: nextModel,
+      })
 
-    if (suggestion) {
-      setVehicleType(suggestion.type)
-      setVehicleSeats(String(suggestion.seats))
-      setRequestedServiceLevels(getSuggestedServiceLevels(suggestion))
+      if (suggestion?.type) {
+        setVehicleType(suggestion.type)
+      }
+
+      if (suggestion?.seats) {
+        setVehicleSeats(String(suggestion.seats))
+      }
+    } catch {
+      // Vehicle suggestion is optional.
     }
   }
 
   function handleVehicleTypeChange(nextType) {
     setVehicleType(nextType)
-    setRequestedServiceLevels(
-      getSuggestedServiceLevels({
-        type: nextType,
-        seats: Number(vehicleSeats) || 4,
-      })
-    )
   }
 
   function handleVehicleSeatsChange(nextSeats) {
     setVehicleSeats(nextSeats)
-    setRequestedServiceLevels(
-      getSuggestedServiceLevels({
-        type: vehicleType,
-        seats: Number(nextSeats) || 4,
-      })
-    )
   }
 
   async function verifyDriverIdentity() {
@@ -468,7 +364,7 @@ function App() {
     }
 
     if (cleanSsn.length !== 9) {
-      setMessage('Please enter a valid 9-digit Social Security number.')
+      setMessage('Please enter a valid 9-digit SSN.')
       return false
     }
 
@@ -477,7 +373,7 @@ function App() {
     } = await supabase.auth.getSession()
 
     if (!session?.access_token) {
-      setMessage('Your session expired. Please log in again.')
+      setMessage('Please log in again.')
       return false
     }
 
@@ -507,10 +403,38 @@ function App() {
     }
 
     setSsn('')
-    setMessage('Identity verified. Continue onboarding.')
     await loadDriverProfile(driverId)
 
     return true
+  }
+
+  async function uploadDriverDocument(file, folder) {
+    if (!file) return null
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      throw new Error('Please log in again.')
+    }
+
+    const extension = file.name.split('.').pop() || 'jpg'
+    const fileName = `${Date.now()}-${crypto.randomUUID()}.${extension}`
+    const filePath = `${user.id}/${folder}/${fileName}`
+
+    const { error } = await supabase.storage
+      .from('driver-documents')
+      .upload(filePath, file, {
+        upsert: false,
+        contentType: file.type || undefined,
+      })
+
+    if (error) {
+      throw error
+    }
+
+    return filePath
   }
 
   async function submitOnboarding() {
@@ -527,10 +451,9 @@ function App() {
       !vehicleYear ||
       !vehiclePlate ||
       !vehicleColor ||
-      !vehicleSeats ||
-      requestedServiceLevels.length === 0
+      !vehicleSeats
     ) {
-      setMessage('Please complete all onboarding fields.')
+      setMessage('Please complete all required fields.')
       return
     }
 
@@ -550,7 +473,7 @@ function App() {
     }
 
     if (!driverProfile?.driver_photo_url && !driverPhotoFile) {
-      setMessage('Please upload a driver profile photo or selfie.')
+      setMessage('Please upload a driver photo.')
       return
     }
 
@@ -590,7 +513,7 @@ function App() {
     }
 
     if (!driverProfile?.vehicle_photo_trunk_url && !vehicleTrunkFile) {
-      setMessage('Please upload a trunk/cargo photo of your vehicle.')
+      setMessage('Please upload a trunk photo of your vehicle.')
       return
     }
 
@@ -617,53 +540,18 @@ function App() {
     let vehicleTrunkUrl = driverProfile?.vehicle_photo_trunk_url || null
 
     try {
-      if (licenseFrontFile) {
-        licenseFrontUrl = await uploadDriverDocument(licenseFrontFile, 'licenses/front')
-      }
-
-      if (licenseBackFile) {
-        licenseBackUrl = await uploadDriverDocument(licenseBackFile, 'licenses/back')
-      }
-
-      if (insuranceFile) {
-        insuranceCardUrl = await uploadDriverDocument(insuranceFile, 'insurance')
-      }
-
-      if (driverPhotoFile) {
-        driverPhotoUrl = await uploadDriverDocument(driverPhotoFile, 'driver-photo')
-      }
-
-      if (registrationFile) {
-        registrationUrl = await uploadDriverDocument(registrationFile, 'vehicle-registration')
-      }
-
-      if (vehicleFrontFile) {
-        vehicleFrontUrl = await uploadDriverDocument(vehicleFrontFile, 'vehicle-photos/front')
-      }
-
-      if (vehicleBackFile) {
-        vehicleBackUrl = await uploadDriverDocument(vehicleBackFile, 'vehicle-photos/back')
-      }
-
-      if (vehicleLeftFile) {
-        vehicleLeftUrl = await uploadDriverDocument(vehicleLeftFile, 'vehicle-photos/left')
-      }
-
-      if (vehicleRightFile) {
-        vehicleRightUrl = await uploadDriverDocument(vehicleRightFile, 'vehicle-photos/right')
-      }
-
-      if (vehicleInteriorFrontFile) {
-        vehicleInteriorFrontUrl = await uploadDriverDocument(vehicleInteriorFrontFile, 'vehicle-photos/interior-front')
-      }
-
-      if (vehicleInteriorBackFile) {
-        vehicleInteriorBackUrl = await uploadDriverDocument(vehicleInteriorBackFile, 'vehicle-photos/interior-back')
-      }
-
-      if (vehicleTrunkFile) {
-        vehicleTrunkUrl = await uploadDriverDocument(vehicleTrunkFile, 'vehicle-photos/trunk')
-      }
+      if (licenseFrontFile) licenseFrontUrl = await uploadDriverDocument(licenseFrontFile, 'licenses/front')
+      if (licenseBackFile) licenseBackUrl = await uploadDriverDocument(licenseBackFile, 'licenses/back')
+      if (insuranceFile) insuranceCardUrl = await uploadDriverDocument(insuranceFile, 'insurance')
+      if (driverPhotoFile) driverPhotoUrl = await uploadDriverDocument(driverPhotoFile, 'driver-photo')
+      if (registrationFile) registrationUrl = await uploadDriverDocument(registrationFile, 'vehicle-registration')
+      if (vehicleFrontFile) vehicleFrontUrl = await uploadDriverDocument(vehicleFrontFile, 'vehicle-photos/front')
+      if (vehicleBackFile) vehicleBackUrl = await uploadDriverDocument(vehicleBackFile, 'vehicle-photos/back')
+      if (vehicleLeftFile) vehicleLeftUrl = await uploadDriverDocument(vehicleLeftFile, 'vehicle-photos/left')
+      if (vehicleRightFile) vehicleRightUrl = await uploadDriverDocument(vehicleRightFile, 'vehicle-photos/right')
+      if (vehicleInteriorFrontFile) vehicleInteriorFrontUrl = await uploadDriverDocument(vehicleInteriorFrontFile, 'vehicle-photos/interior-front')
+      if (vehicleInteriorBackFile) vehicleInteriorBackUrl = await uploadDriverDocument(vehicleInteriorBackFile, 'vehicle-photos/interior-back')
+      if (vehicleTrunkFile) vehicleTrunkUrl = await uploadDriverDocument(vehicleTrunkFile, 'vehicle-photos/trunk')
     } catch (error) {
       setLoading(false)
       setMessage(error.message)
@@ -686,7 +574,7 @@ function App() {
         vehicle_plate: vehiclePlate,
         vehicle_color: vehicleColor,
         vehicle_seats: Number(vehicleSeats),
-        requested_service_levels: requestedServiceLevels,
+        requested_service_levels: [],
         insurance_card_url: insuranceCardUrl,
         driver_photo_url: driverPhotoUrl,
         vehicle_registration_url: registrationUrl,
@@ -705,6 +593,8 @@ function App() {
         vehicle_rejected_at: null,
         vehicle_rejection_reason: null,
         vehicle_suspended_at: null,
+        is_online: false,
+        availability_status: 'offline',
       })
       .eq('id', driverId)
 
@@ -727,7 +617,7 @@ function App() {
     setVehicleInteriorFrontFile(null)
     setVehicleInteriorBackFile(null)
     setVehicleTrunkFile(null)
-    setMessage('Onboarding submitted. Waiting for admin approval.')
+    setMessage('Onboarding submitted for review.')
     await loadDriverProfile(driverId)
   }
 
@@ -771,27 +661,25 @@ function App() {
     )
   }
 
-  async function goOnline() {
-    if (!driverId) return
-
+  function validateDriverCanWork(actionText) {
     if (driverProfile?.onboarding_status !== 'approved') {
-      setMessage('Complete onboarding and wait for admin approval before going online.')
-      return
+      setMessage(`Complete onboarding and wait for approval before ${actionText}.`)
+      return false
     }
 
-    if (driverProfile?.deactivation_status === 'deactivated_permanent') {
-      setMessage('This driver account has been permanently deactivated.')
-      return
+    if ((driverProfile?.deactivation_status || 'active') !== 'active') {
+      setMessage('This driver account is not active.')
+      return false
     }
 
     if (driverProfile?.identity_verification_status !== 'cleared') {
-      setMessage('Your identity must be verified before going online.')
-      return
+      setMessage('Identity verification is required.')
+      return false
     }
 
     if (driverProfile?.background_check_status !== 'passed') {
-      setMessage('Your background check must be marked as passed before going online.')
-      return
+      setMessage('Background check approval is required.')
+      return false
     }
 
     if (
@@ -799,7 +687,17 @@ function App() {
       !Array.isArray(driverProfile?.approved_service_levels) ||
       driverProfile.approved_service_levels.length === 0
     ) {
-      setMessage('Your vehicle service level must be approved before going online.')
+      setMessage('Vehicle approval is required.')
+      return false
+    }
+
+    return true
+  }
+
+  async function goOnline() {
+    if (!driverId) return
+
+    if (!validateDriverCanWork('going online')) {
       return
     }
 
@@ -837,7 +735,7 @@ function App() {
 
         setStatus('online')
         setLocationText(`${lat.toFixed(6)}, ${lng.toFixed(6)}`)
-        setMessage('You are now online and sharing location.')
+        setMessage('You are online.')
         await loadRideRequests()
       },
       () => {
@@ -876,7 +774,7 @@ function App() {
 
     setStatus('offline')
     setRides([])
-    setMessage('You are now offline.')
+    setMessage('You are offline.')
   }
 
   async function loadRideRequests() {
@@ -951,35 +849,19 @@ function App() {
     setRatingsCount(data.length)
   }
 
+  function driverCanReceiveRide(rideType) {
+    const approvedLevels = Array.isArray(driverProfile?.approved_service_levels)
+      ? driverProfile.approved_service_levels
+      : []
+
+    const eligibleLevels = eligibleServiceLevelsForRide(rideType)
+    return approvedLevels.some((level) => eligibleLevels.includes(level))
+  }
+
   async function acceptRide(ride) {
     if (!driverId) return
 
-    if (driverProfile?.onboarding_status !== 'approved') {
-      setMessage('You must be approved before accepting rides.')
-      return
-    }
-
-    if (driverProfile?.deactivation_status === 'deactivated_permanent') {
-      setMessage('This driver account has been permanently deactivated.')
-      return
-    }
-
-    if (driverProfile?.identity_verification_status !== 'cleared') {
-      setMessage('Your identity must be verified before accepting rides.')
-      return
-    }
-
-    if (driverProfile?.background_check_status !== 'passed') {
-      setMessage('Your background check must be marked as passed before accepting rides.')
-      return
-    }
-
-    if (
-      driverProfile?.vehicle_service_status !== 'approved' ||
-      !Array.isArray(driverProfile?.approved_service_levels) ||
-      driverProfile.approved_service_levels.length === 0
-    ) {
-      setMessage('Your vehicle service level must be approved before accepting rides.')
+    if (!validateDriverCanWork('accepting rides')) {
       return
     }
 
@@ -990,7 +872,7 @@ function App() {
     }
 
     if (status !== 'online') {
-      setMessage('You must be online before accepting rides.')
+      setMessage('Go online before accepting rides.')
       return
     }
 
@@ -1057,7 +939,7 @@ function App() {
     if (newStatus === 'arrived') setMessage('Marked as arrived.')
     if (newStatus === 'in_progress') setMessage('Trip started.')
 
-    loadRideHistory()
+    await loadRideHistory()
   }
 
   async function completeTrip() {
@@ -1104,7 +986,7 @@ function App() {
     setEarnings(newEarnings)
     setActiveRide(null)
     setStatus('online')
-    setMessage('Trip completed successfully.')
+    setMessage('Trip completed.')
 
     await loadRideRequests()
     await loadActiveRide()
@@ -1165,34 +1047,27 @@ function App() {
     await loadRideHistory()
   }
 
-  function formatDate(value) {
-    if (!value) return ''
-    return new Date(value).toLocaleString()
-  }
-
   const availableVehicleModels = vehicleMake
     ? VEHICLE_MODELS_BY_MAKE[vehicleMake] || []
     : []
 
   const onboardingStatus = driverProfile?.onboarding_status || 'not_started'
   const vehicleServiceStatus = driverProfile?.vehicle_service_status || 'pending'
+  const identityStatus = driverProfile?.identity_verification_status || 'not_submitted'
+  const backgroundCheckStatus = driverProfile?.background_check_status || 'not_started'
+  const deactivationStatus = driverProfile?.deactivation_status || 'active'
   const isApproved = onboardingStatus === 'approved'
   const isPendingReview = onboardingStatus === 'pending_review'
+  const isDriverActive = deactivationStatus === 'active'
   const isVehicleApproved =
     vehicleServiceStatus === 'approved' &&
     Array.isArray(driverProfile?.approved_service_levels) &&
     driverProfile.approved_service_levels.length > 0
-  const identityStatus = driverProfile?.identity_verification_status || 'not_submitted'
-  const backgroundCheckStatus = driverProfile?.background_check_status || 'not_started'
-  const deactivationStatus = driverProfile?.deactivation_status || 'active'
-  const isIdentityCleared = identityStatus === 'cleared'
-  const isBackgroundPassed = backgroundCheckStatus === 'passed'
-  const isDriverActive = deactivationStatus !== 'deactivated_permanent'
   const canGoOnline =
     isApproved &&
     isVehicleApproved &&
-    isIdentityCleared &&
-    isBackgroundPassed &&
+    identityStatus === 'cleared' &&
+    backgroundCheckStatus === 'passed' &&
     isDriverActive
 
   if (!loggedIn) {
@@ -1220,11 +1095,11 @@ function App() {
             <button type="submit" disabled={loading}>
               {loading
                 ? authMode === 'login'
-                  ? 'Signing In...'
-                  : 'Creating Account...'
+                  ? 'Signing in...'
+                  : 'Creating account...'
                 : authMode === 'login'
                   ? 'Login'
-                  : 'Create Driver Account'}
+                  : 'Create account'}
             </button>
           </form>
 
@@ -1261,19 +1136,21 @@ function App() {
 
       {activePage === 'dashboard' && (
         <>
-          {showOnboarding && !isApproved && (
+          {!isApproved && (
             <section className="card">
               <h2>Driver Onboarding</h2>
-              <p><strong>Status:</strong> {onboardingStatus}</p>
-              <p><strong>Vehicle Service Status:</strong> {vehicleServiceStatus}</p>
+              <p><strong>Status:</strong> {statusText(onboardingStatus)}</p>
 
               {isPendingReview ? (
-                <>
-                  <p>Your application has been submitted and is waiting for admin approval.</p>
-                  <p><strong>Requested Services:</strong> {formatServiceLevels(driverProfile?.requested_service_levels)}</p>
-                </>
+                <p>Your application is under review.</p>
               ) : (
                 <>
+                  {onboardingStatus === 'rejected' && (
+                    <p className="warning">
+                      Please review your information and resubmit.
+                    </p>
+                  )}
+
                   <input
                     placeholder="First Name"
                     value={firstName}
@@ -1292,13 +1169,13 @@ function App() {
                     onChange={(e) => setPhone(e.target.value)}
                   />
 
-                  <label>Social Security Number</label>
+                  <label>SSN</label>
                   <input
                     type="password"
                     inputMode="numeric"
                     placeholder={
                       driverProfile?.identity_verification_status === 'cleared'
-                        ? 'Identity already verified'
+                        ? 'Verified'
                         : 'Enter 9-digit SSN'
                     }
                     value={ssn}
@@ -1306,30 +1183,13 @@ function App() {
                     disabled={driverProfile?.identity_verification_status === 'cleared'}
                   />
 
-                  <p>
-                    LibreRide uses your Social Security number only for identity verification,
-                    duplicate account prevention, and driver eligibility review. The full SSN is
-                    not stored or displayed in the admin panel.
-                  </p>
-
-                  <p>
-                    <strong>Identity Status:</strong>{' '}
-                    {driverProfile?.identity_verification_status || 'not_submitted'}
-                  </p>
-
-                  {driverProfile?.ssn_last4 && (
-                    <p>
-                      <strong>SSN Last 4:</strong> ***-**-{driverProfile.ssn_last4}
-                    </p>
-                  )}
-
-                  <label>Driver Profile Photo / Selfie</label>
+                  <label>Driver Photo</label>
                   <input
                     type="file"
                     accept="image/*"
                     onChange={(e) => setDriverPhotoFile(e.target.files[0])}
                   />
-                  {driverProfile?.driver_photo_url && <p>Driver photo uploaded.</p>}
+                  {driverProfile?.driver_photo_url && <p>Uploaded.</p>}
 
                   <input
                     placeholder="License Number"
@@ -1343,7 +1203,7 @@ function App() {
                     accept="image/*,.pdf"
                     onChange={(e) => setLicenseFrontFile(e.target.files[0])}
                   />
-                  {driverProfile?.license_front_url && <p>License front uploaded.</p>}
+                  {driverProfile?.license_front_url && <p>Uploaded.</p>}
 
                   <label>License Back</label>
                   <input
@@ -1351,13 +1211,10 @@ function App() {
                     accept="image/*,.pdf"
                     onChange={(e) => setLicenseBackFile(e.target.files[0])}
                   />
-                  {driverProfile?.license_back_url && <p>License back uploaded.</p>}
+                  {driverProfile?.license_back_url && <p>Uploaded.</p>}
 
                   <label>Vehicle Make</label>
-                  <select
-                    value={vehicleMake}
-                    onChange={(e) => handleVehicleMakeChange(e.target.value)}
-                  >
+                  <select value={vehicleMake} onChange={(e) => handleVehicleMakeChange(e.target.value)}>
                     <option value="">Select vehicle make</option>
                     {VEHICLE_MAKES.map((make) => (
                       <option key={make} value={make}>
@@ -1381,10 +1238,7 @@ function App() {
                   </select>
 
                   <label>Vehicle Type</label>
-                  <select
-                    value={vehicleType}
-                    onChange={(e) => handleVehicleTypeChange(e.target.value)}
-                  >
+                  <select value={vehicleType} onChange={(e) => handleVehicleTypeChange(e.target.value)}>
                     {VEHICLE_TYPES.map((type) => (
                       <option key={type.value} value={type.value}>
                         {type.label}
@@ -1393,10 +1247,7 @@ function App() {
                   </select>
 
                   <label>Vehicle Year</label>
-                  <select
-                    value={vehicleYear}
-                    onChange={(e) => setVehicleYear(e.target.value)}
-                  >
+                  <select value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)}>
                     <option value="">Select vehicle year</option>
                     {VEHICLE_YEAR_OPTIONS.map((year) => (
                       <option key={year} value={year}>
@@ -1412,10 +1263,7 @@ function App() {
                   />
 
                   <label>Vehicle Color</label>
-                  <select
-                    value={vehicleColor}
-                    onChange={(e) => setVehicleColor(e.target.value)}
-                  >
+                  <select value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)}>
                     <option value="">Select vehicle color</option>
                     {VEHICLE_COLORS.map((color) => (
                       <option key={color} value={color}>
@@ -1425,10 +1273,7 @@ function App() {
                   </select>
 
                   <label>Passenger Seats</label>
-                  <select
-                    value={vehicleSeats}
-                    onChange={(e) => handleVehicleSeatsChange(e.target.value)}
-                  >
+                  <select value={vehicleSeats} onChange={(e) => handleVehicleSeatsChange(e.target.value)}>
                     {[4, 5, 6, 7, 8].map((seatCount) => (
                       <option key={seatCount} value={String(seatCount)}>
                         {seatCount} passenger seats
@@ -1436,96 +1281,13 @@ function App() {
                     ))}
                   </select>
 
-                  <p>
-                    Suggested services based on vehicle:{' '}
-                    <strong>{formatServiceLevels(requestedServiceLevels)}</strong>
-                  </p>
-
                   <label>Vehicle Registration</label>
                   <input
                     type="file"
                     accept="image/*,.pdf"
                     onChange={(e) => setRegistrationFile(e.target.files[0])}
                   />
-                  {driverProfile?.vehicle_registration_url && <p>Vehicle registration uploaded.</p>}
-
-                  <div className="ride-card">
-                    <h3>Vehicle Photos</h3>
-                    <p>Upload clear photos for admin review before service approval.</p>
-
-                    <label>Vehicle Front Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleFrontFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_front_url && <p>Front photo uploaded.</p>}
-
-                    <label>Vehicle Back Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleBackFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_back_url && <p>Back photo uploaded.</p>}
-
-                    <label>Vehicle Left Side Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleLeftFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_left_url && <p>Left side photo uploaded.</p>}
-
-                    <label>Vehicle Right Side Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleRightFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_right_url && <p>Right side photo uploaded.</p>}
-
-                    <label>Interior Front Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleInteriorFrontFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_interior_front_url && <p>Interior front photo uploaded.</p>}
-
-                    <label>Interior Back Seat Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleInteriorBackFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_interior_back_url && <p>Interior back photo uploaded.</p>}
-
-                    <label>Trunk / Cargo Photo</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setVehicleTrunkFile(e.target.files[0])}
-                    />
-                    {driverProfile?.vehicle_photo_trunk_url && <p>Trunk photo uploaded.</p>}
-                  </div>
-
-                  <div className="ride-card">
-                    <h3>Requested Service Levels</h3>
-                    <p>Select what this vehicle should be reviewed for. Admin makes the final approval.</p>
-
-                    {SERVICE_LEVELS.map((level) => (
-                      <label key={level.value} style={{ display: 'block', marginBottom: '8px' }}>
-                        <input
-                          type="checkbox"
-                          checked={requestedServiceLevels.includes(level.value)}
-                          onChange={() => toggleRequestedServiceLevel(level.value)}
-                        />
-                        {' '}
-                        <strong>{level.label}</strong> — {level.description}
-                      </label>
-                    ))}
-                  </div>
+                  {driverProfile?.vehicle_registration_url && <p>Uploaded.</p>}
 
                   <label>Insurance Card</label>
                   <input
@@ -1533,7 +1295,67 @@ function App() {
                     accept="image/*,.pdf"
                     onChange={(e) => setInsuranceFile(e.target.files[0])}
                   />
-                  {driverProfile?.insurance_card_url && <p>Insurance card uploaded.</p>}
+                  {driverProfile?.insurance_card_url && <p>Uploaded.</p>}
+
+                  <div className="ride-card">
+                    <h3>Vehicle Photos</h3>
+
+                    <label>Front Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleFrontFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_front_url && <p>Uploaded.</p>}
+
+                    <label>Back Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleBackFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_back_url && <p>Uploaded.</p>}
+
+                    <label>Left Side Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleLeftFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_left_url && <p>Uploaded.</p>}
+
+                    <label>Right Side Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleRightFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_right_url && <p>Uploaded.</p>}
+
+                    <label>Front Interior Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleInteriorFrontFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_interior_front_url && <p>Uploaded.</p>}
+
+                    <label>Back Seat Interior Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleInteriorBackFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_interior_back_url && <p>Uploaded.</p>}
+
+                    <label>Trunk Photo</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVehicleTrunkFile(e.target.files[0])}
+                    />
+                    {driverProfile?.vehicle_photo_trunk_url && <p>Uploaded.</p>}
+                  </div>
 
                   <button type="button" onClick={submitOnboarding} disabled={loading}>
                     {loading ? 'Submitting...' : 'Submit For Review'}
@@ -1546,116 +1368,109 @@ function App() {
           <section className="card">
             <h2>Status</h2>
             <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
-            <p><strong>Approval:</strong> {onboardingStatus}</p>
-            <p><strong>Vehicle Approval:</strong> {vehicleServiceStatus}</p>
-            <p><strong>Identity:</strong> {identityStatus}</p>
-            <p><strong>Background Check:</strong> {backgroundCheckStatus}</p>
-            <p><strong>Account Status:</strong> {deactivationStatus}</p>
-            <p><strong>Requested Services:</strong> {formatServiceLevels(driverProfile?.requested_service_levels)}</p>
+            <p><strong>Application:</strong> {statusText(onboardingStatus)}</p>
+            <p><strong>Vehicle:</strong> {statusText(vehicleServiceStatus)}</p>
+            <p><strong>Identity:</strong> {identityStatus === 'cleared' ? 'Verified' : statusText(identityStatus)}</p>
+            <p><strong>Background:</strong> {statusText(backgroundCheckStatus)}</p>
+            <p><strong>Account:</strong> {statusText(deactivationStatus)}</p>
             <p><strong>Approved Services:</strong> {formatServiceLevels(driverProfile?.approved_service_levels)}</p>
-            <p><strong>GPS:</strong> {locationText}</p>
+            <p><strong>Location:</strong> {locationText}</p>
 
-            {status === 'offline' ? (
-              <button type="button" onClick={goOnline} disabled={loading || !canGoOnline}>
-                {loading ? 'Updating...' : 'Go Online'}
+            {!isApproved && (
+              <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+                Complete Onboarding
+              </button>
+            )}
+
+            <button type="button" onClick={updateDriverLocation}>
+              Update Location
+            </button>
+
+            {status === 'online' ? (
+              <button type="button" onClick={goOffline} disabled={loading}>
+                Go Offline
               </button>
             ) : (
-              <button type="button" onClick={goOffline} disabled={loading}>
-                {loading ? 'Updating...' : 'Go Offline'}
+              <button type="button" onClick={goOnline} disabled={loading || !canGoOnline}>
+                Go Online
               </button>
             )}
 
-            {!isApproved && <p>You must complete onboarding and be approved before going online.</p>}
-
-            {isApproved && !isVehicleApproved && (
-              <p>Your driver account is approved, but your vehicle service level is still waiting for approval.</p>
-            )}
-
-            {isApproved && !isIdentityCleared && (
-              <p>Your identity must be verified before going online.</p>
-            )}
-
-            {isApproved && isIdentityCleared && !isBackgroundPassed && (
-              <p>Your manual background check must be marked as passed before going online.</p>
-            )}
-
-            {!isDriverActive && (
-              <p>This driver account has been permanently deactivated.</p>
-            )}
-
-            {status === 'online' && (
-              <button type="button" onClick={updateDriverLocation}>Update GPS Now</button>
+            {!canGoOnline && isApproved && (
+              <p className="warning">Your account is not eligible to go online yet.</p>
             )}
 
             {message && <p>{message}</p>}
           </section>
 
           <section className="card">
-            <h2>Today</h2>
-            <p>Trips completed: {tripsCompleted}</p>
-            <p>Earnings: ${earnings.toFixed(2)}</p>
-            <p>Rating: {averageRating ? `${averageRating.toFixed(1)} ★ (${ratingsCount})` : 'No ratings yet'}</p>
+            <h2>Active Ride</h2>
+
+            {activeRide ? (
+              <div className="ride-card">
+                <p><strong>Status:</strong> {statusText(activeRide.status)}</p>
+                <p><strong>Ride Type:</strong> {formatRideType(activeRide.ride_type)}</p>
+                <p><strong>Pickup:</strong> {activeRide.pickup_address}</p>
+                <p><strong>Destination:</strong> {activeRide.destination_address}</p>
+                <p><strong>Estimated Fare:</strong> {formatMoneyFromCents(activeRide.estimated_fare_cents)}</p>
+
+                {activeRide.status === 'accepted' && (
+                  <button type="button" onClick={() => updateRideStatus('arrived')}>
+                    Mark Arrived
+                  </button>
+                )}
+
+                {activeRide.status === 'arrived' && (
+                  <button type="button" onClick={() => updateRideStatus('in_progress')}>
+                    Start Trip
+                  </button>
+                )}
+
+                {activeRide.status === 'in_progress' && (
+                  <button type="button" onClick={completeTrip}>
+                    Complete Trip
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p>No active ride.</p>
+            )}
           </section>
 
-          {activeRide && (
-            <section className="card">
-              <h2>Active Ride</h2>
-              <p><strong>Status:</strong> {activeRide.status}</p>
-              <p><strong>Ride Type:</strong> {formatServiceLevel(activeRide.ride_type)}</p>
-              {activeRide.requested_capacity && (
-                <p><strong>Requested Capacity:</strong> {activeRide.requested_capacity} seats</p>
-              )}
-              <p><strong>Pickup:</strong> {activeRide.pickup_address || 'Unknown'}</p>
-              <p><strong>Dropoff:</strong> {activeRide.destination_address || 'Unknown'}</p>
-              <p><strong>Fare:</strong> ${((activeRide.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+          <section className="card">
+            <h2>Ride Requests</h2>
 
-              {activeRide.status === 'accepted' && (
-                <button type="button" onClick={() => updateRideStatus('arrived')}>Arrived</button>
-              )}
+            {status !== 'online' && <p>Go online to receive requests.</p>}
 
-              {activeRide.status === 'arrived' && (
-                <button type="button" onClick={() => updateRideStatus('in_progress')}>Start Trip</button>
-              )}
+            {status === 'online' && rides.length === 0 && <p>No ride requests.</p>}
 
-              {activeRide.status === 'in_progress' && (
-                <button type="button" onClick={completeTrip}>Complete Trip</button>
-              )}
-            </section>
-          )}
+            {rides.map((ride) => (
+              <div className="ride-card" key={ride.id}>
+                <p><strong>Ride Type:</strong> {formatRideType(ride.ride_type)}</p>
+                <p><strong>Pickup:</strong> {ride.pickup_address}</p>
+                <p><strong>Destination:</strong> {ride.destination_address}</p>
+                <p><strong>Estimated Fare:</strong> {formatMoneyFromCents(ride.estimated_fare_cents)}</p>
 
-          {!activeRide && isApproved && status === 'online' && (
-            <section className="card">
-              <h2>Ride Requests</h2>
+                <button type="button" onClick={() => acceptRide(ride)}>
+                  Accept
+                </button>
 
-              <button type="button" onClick={loadRideRequests}>Refresh Requests</button>
+                <button type="button" onClick={() => declineRide(ride.id)}>
+                  Decline
+                </button>
+              </div>
+            ))}
+          </section>
 
-              {rides.length === 0 ? (
-                <p>No dispatched ride requests yet.</p>
-              ) : (
-                rides.map((ride) => (
-                  <div key={ride.id} className="ride-card">
-                    <p><strong>Ride Type:</strong> {formatServiceLevel(ride.ride_type)}</p>
-                    {ride.requested_capacity && (
-                      <p><strong>Requested Capacity:</strong> {ride.requested_capacity} seats</p>
-                    )}
-                    <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
-                    <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
-                    <p><strong>Fare:</strong> ${((ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
-
-                    <button type="button" onClick={() => acceptRide(ride)}>Accept</button>
-                    <button type="button" onClick={() => declineRide(ride.id)}>Decline</button>
-                  </div>
-                ))
-              )}
-            </section>
-          )}
-
-          {!activeRide && isApproved && status !== 'online' && (
-            <section className="card">
-              <h2>Ride Requests</h2>
-              <p>Go online to receive ride requests.</p>
-            </section>
-          )}
+          <section className="card">
+            <h2>Performance</h2>
+            <p><strong>Trips:</strong> {tripsCompleted}</p>
+            <p><strong>Earnings:</strong> ${earnings.toFixed(2)}</p>
+            <p>
+              <strong>Rating:</strong>{' '}
+              {averageRating ? `${averageRating.toFixed(1)} (${ratingsCount})` : 'No ratings yet'}
+            </p>
+          </section>
         </>
       )}
 
@@ -1667,17 +1482,13 @@ function App() {
             <p>No trips yet.</p>
           ) : (
             rideHistory.map((ride) => (
-              <div key={ride.id} className="ride-card">
-                <p><strong>Status:</strong> {ride.status}</p>
-                <p><strong>Ride Type:</strong> {formatServiceLevel(ride.ride_type)}</p>
-                {ride.requested_capacity && (
-                  <p><strong>Requested Capacity:</strong> {ride.requested_capacity} seats</p>
-                )}
-                <p><strong>Pickup:</strong> {ride.pickup_address || 'Unknown'}</p>
-                <p><strong>Dropoff:</strong> {ride.destination_address || 'Unknown'}</p>
-                <p><strong>Fare:</strong> ${((ride.final_fare_cents || ride.estimated_fare_cents || 0) / 100).toFixed(2)}</p>
+              <div className="ride-card" key={ride.id}>
+                <p><strong>Status:</strong> {statusText(ride.status)}</p>
+                <p><strong>Ride Type:</strong> {formatRideType(ride.ride_type)}</p>
+                <p><strong>Pickup:</strong> {ride.pickup_address}</p>
+                <p><strong>Destination:</strong> {ride.destination_address}</p>
+                <p><strong>Fare:</strong> {formatMoneyFromCents(ride.final_fare_cents || ride.estimated_fare_cents)}</p>
                 <p><strong>Date:</strong> {formatDate(ride.created_at)}</p>
-                {ride.completed_at && <p><strong>Completed:</strong> {formatDate(ride.completed_at)}</p>}
               </div>
             ))
           )}
