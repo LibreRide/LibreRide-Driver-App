@@ -10,7 +10,7 @@ import {
   getVehicleSuggestion,
   getSuggestedServiceLevels,
 } from './vehicleCatalog'
-
+const API_BASE = 'https://libreride-backend.libreride.workers.dev'
 const SERVICE_LEVELS = [
   { value: 'regular', label: 'Regular', description: 'Standard 4-door vehicle' },
   { value: 'xl', label: 'XL', description: 'SUV/minivan, 6 passenger seats' },
@@ -84,7 +84,7 @@ function App() {
   const [vehicleColor, setVehicleColor] = useState('')
   const [vehicleSeats, setVehicleSeats] = useState('4')
   const [requestedServiceLevels, setRequestedServiceLevels] = useState(['regular'])
-
+  const [ssn, setSsn] = useState('')
   useEffect(() => {
     restoreSession()
   }, [])
@@ -175,33 +175,52 @@ function App() {
   }
 
   async function restoreSession() {
-    const { data } = await supabase.auth.getSession()
+  const { data } = await supabase.auth.getSession()
 
-    if (data.session?.user) {
-      const user = data.session.user
-      setEmail(user.email)
-
-      const { data: driver } = await supabase
-        .from('drivers')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle()
-
-      if (driver) {
-        setDriverId(driver.id)
-        await loadDriverProfile(driver.id)
-        setStatus(driver.availability_status || 'offline')
-        setTripsCompleted(driver.total_trips || 0)
-        setEarnings(Number(driver.total_earnings || 0))
-
-        if (driver.current_lat && driver.current_lng) {
-          setLocationText(`${driver.current_lat}, ${driver.current_lng}`)
-        }
-
-        setLoggedIn(true)
-      }
-    }
+  if (!data.session?.user) {
+    return
   }
+
+  const user = data.session.user
+  setEmail(user.email)
+
+  const { data: driver, error: driverError } = await supabase
+    .from('drivers')
+    .upsert(
+      {
+        user_id: user.id,
+        email: user.email,
+      },
+      { onConflict: 'user_id' }
+    )
+    .select('*')
+    .single()
+
+  if (driverError) {
+    setMessage(driverError.message)
+    return
+  }
+
+  setDriverId(driver.id)
+  await loadDriverProfile(driver.id)
+  setStatus(driver.availability_status || 'offline')
+  setTripsCompleted(driver.total_trips || 0)
+  setEarnings(Number(driver.total_earnings || 0))
+
+  if (driver.current_lat && driver.current_lng) {
+    setLocationText(`${driver.current_lat}, ${driver.current_lng}`)
+  }
+
+  setLoggedIn(true)
+  setActivePage('dashboard')
+
+  const params = new URLSearchParams(window.location.search)
+
+  if (params.get('verified') === 'true') {
+    setMessage('Email verified. Continue your LibreRide driver onboarding.')
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }
+}
 
   async function login(e) {
     e.preventDefault()
@@ -263,6 +282,13 @@ function App() {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo: 'https://driver.libreride.com/?verified=true',
+        data: {
+          app: 'LibreRide Driver',
+          role: 'driver',
+        },
+      },
     })
 
     setLoading(false)
@@ -273,7 +299,7 @@ function App() {
     }
 
     if (data.user) {
-      setMessage('Account created successfully. Check your email for verification, then log in.')
+      setMessage('Account created. Please check your email and click the LibreRide confirmation link to continue onboarding.')
       setAuthMode('login')
     }
   }
@@ -310,6 +336,7 @@ function App() {
     setVehicleColor('')
     setVehicleSeats('4')
     setRequestedServiceLevels(['regular'])
+    setSsn('')
     setLicenseFrontFile(null)
     setLicenseBackFile(null)
     setInsuranceFile(null)
@@ -433,6 +460,59 @@ function App() {
     )
   }
 
+  async function verifyDriverIdentity() {
+    const cleanSsn = ssn.replace(/\D/g, '')
+
+    if (driverProfile?.identity_verification_status === 'cleared') {
+      return true
+    }
+
+    if (cleanSsn.length !== 9) {
+      setMessage('Please enter a valid 9-digit Social Security number.')
+      return false
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+
+    if (!session?.access_token) {
+      setMessage('Your session expired. Please log in again.')
+      return false
+    }
+
+    const response = await fetch(`${API_BASE}/api/drivers/identity-check`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ssn: cleanSsn,
+      }),
+    })
+
+    let result = {}
+
+    try {
+      result = await response.json()
+    } catch {
+      result = {}
+    }
+
+    if (!response.ok) {
+      setMessage(result.error || 'Identity verification failed.')
+      await loadDriverProfile(driverId)
+      return false
+    }
+
+    setSsn('')
+    setMessage('Identity verified. Continue onboarding.')
+    await loadDriverProfile(driverId)
+
+    return true
+  }
+
   async function submitOnboarding() {
     if (!driverId) return
 
@@ -511,6 +591,12 @@ function App() {
 
     if (!driverProfile?.vehicle_photo_trunk_url && !vehicleTrunkFile) {
       setMessage('Please upload a trunk/cargo photo of your vehicle.')
+      return
+    }
+
+    const identityOk = await verifyDriverIdentity()
+
+    if (!identityOk) {
       return
     }
 
@@ -693,6 +779,21 @@ function App() {
       return
     }
 
+    if (driverProfile?.deactivation_status === 'deactivated_permanent') {
+      setMessage('This driver account has been permanently deactivated.')
+      return
+    }
+
+    if (driverProfile?.identity_verification_status !== 'cleared') {
+      setMessage('Your identity must be verified before going online.')
+      return
+    }
+
+    if (driverProfile?.background_check_status !== 'passed') {
+      setMessage('Your background check must be marked as passed before going online.')
+      return
+    }
+
     if (
       driverProfile?.vehicle_service_status !== 'approved' ||
       !Array.isArray(driverProfile?.approved_service_levels) ||
@@ -855,6 +956,21 @@ function App() {
 
     if (driverProfile?.onboarding_status !== 'approved') {
       setMessage('You must be approved before accepting rides.')
+      return
+    }
+
+    if (driverProfile?.deactivation_status === 'deactivated_permanent') {
+      setMessage('This driver account has been permanently deactivated.')
+      return
+    }
+
+    if (driverProfile?.identity_verification_status !== 'cleared') {
+      setMessage('Your identity must be verified before accepting rides.')
+      return
+    }
+
+    if (driverProfile?.background_check_status !== 'passed') {
+      setMessage('Your background check must be marked as passed before accepting rides.')
       return
     }
 
@@ -1066,6 +1182,18 @@ function App() {
     vehicleServiceStatus === 'approved' &&
     Array.isArray(driverProfile?.approved_service_levels) &&
     driverProfile.approved_service_levels.length > 0
+  const identityStatus = driverProfile?.identity_verification_status || 'not_submitted'
+  const backgroundCheckStatus = driverProfile?.background_check_status || 'not_started'
+  const deactivationStatus = driverProfile?.deactivation_status || 'active'
+  const isIdentityCleared = identityStatus === 'cleared'
+  const isBackgroundPassed = backgroundCheckStatus === 'passed'
+  const isDriverActive = deactivationStatus !== 'deactivated_permanent'
+  const canGoOnline =
+    isApproved &&
+    isVehicleApproved &&
+    isIdentityCleared &&
+    isBackgroundPassed &&
+    isDriverActive
 
   if (!loggedIn) {
     return (
@@ -1163,6 +1291,37 @@ function App() {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                   />
+
+                  <label>Social Security Number</label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    placeholder={
+                      driverProfile?.identity_verification_status === 'cleared'
+                        ? 'Identity already verified'
+                        : 'Enter 9-digit SSN'
+                    }
+                    value={ssn}
+                    onChange={(e) => setSsn(e.target.value)}
+                    disabled={driverProfile?.identity_verification_status === 'cleared'}
+                  />
+
+                  <p>
+                    LibreRide uses your Social Security number only for identity verification,
+                    duplicate account prevention, and driver eligibility review. The full SSN is
+                    not stored or displayed in the admin panel.
+                  </p>
+
+                  <p>
+                    <strong>Identity Status:</strong>{' '}
+                    {driverProfile?.identity_verification_status || 'not_submitted'}
+                  </p>
+
+                  {driverProfile?.ssn_last4 && (
+                    <p>
+                      <strong>SSN Last 4:</strong> ***-**-{driverProfile.ssn_last4}
+                    </p>
+                  )}
 
                   <label>Driver Profile Photo / Selfie</label>
                   <input
@@ -1389,12 +1548,15 @@ function App() {
             <p className="status">{status === 'online' ? 'Online' : 'Offline'}</p>
             <p><strong>Approval:</strong> {onboardingStatus}</p>
             <p><strong>Vehicle Approval:</strong> {vehicleServiceStatus}</p>
+            <p><strong>Identity:</strong> {identityStatus}</p>
+            <p><strong>Background Check:</strong> {backgroundCheckStatus}</p>
+            <p><strong>Account Status:</strong> {deactivationStatus}</p>
             <p><strong>Requested Services:</strong> {formatServiceLevels(driverProfile?.requested_service_levels)}</p>
             <p><strong>Approved Services:</strong> {formatServiceLevels(driverProfile?.approved_service_levels)}</p>
             <p><strong>GPS:</strong> {locationText}</p>
 
             {status === 'offline' ? (
-              <button type="button" onClick={goOnline} disabled={loading || !isApproved || !isVehicleApproved}>
+              <button type="button" onClick={goOnline} disabled={loading || !canGoOnline}>
                 {loading ? 'Updating...' : 'Go Online'}
               </button>
             ) : (
@@ -1407,6 +1569,18 @@ function App() {
 
             {isApproved && !isVehicleApproved && (
               <p>Your driver account is approved, but your vehicle service level is still waiting for approval.</p>
+            )}
+
+            {isApproved && !isIdentityCleared && (
+              <p>Your identity must be verified before going online.</p>
+            )}
+
+            {isApproved && isIdentityCleared && !isBackgroundPassed && (
+              <p>Your manual background check must be marked as passed before going online.</p>
+            )}
+
+            {!isDriverActive && (
+              <p>This driver account has been permanently deactivated.</p>
             )}
 
             {status === 'online' && (
